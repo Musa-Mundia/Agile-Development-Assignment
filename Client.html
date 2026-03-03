@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Client Dashboard</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div class="sidebar">
+    <h2>Gym Client</h2>
+    <a href="#">My Workouts</a>
+    <a href="courses.html">Courses</a>
+    <a href="#">Hire Trainer</a>
+    <a href="#">Progress</a>
+    <a href="#">Messages</a>
+    <a href="#" class="cart-toggle">Cart 🛒</a>
+</div>
+
+<div class="main-content">
+    <h1>Welcome Back!</h1>
+
+    <section class="dashboard-section">
+        <h2>Today's Workout</h2>
+        <div class="workout-card">
+            <h3>Upper Body Strength</h3>
+            <p>Bench Press, Rows, Shoulder Press, Biceps</p>
+            <button>View Workout</button>
+        </div>
+    </section>
+
+    <section class="dashboard-section">
+        <h2>Your Purchased Courses</h2>
+        <div class="course-grid">
+            <div class="course-card">
+                <img src="img/fatloss.jpg">
+                <h3>Fat Loss Program</h3>
+                <p>8 Weeks • Intermediate</p>
+                <button>Start Course</button>
+            </div>
+        </div>
+    </section>
+</div>
+
+<div class="cart-widget cart-minimized">
+    <div class="cart-header">
+        <h3>Your Cart</h3>
+        <span class="close-cart">&times;</span>
+    </div>
+    <div class="cart-items"></div>
+    <div class="cart-footer">
+        <p>Total: £<span id="cartTotal">0.00</span></p>
+        <button class="checkout-btn">Checkout</button>
+        <button class="clear-btn">Clear Cart</button>
+    </div>
+</div>
+
+<script src="Cart.js"></script>
+<script>
+    CartExtension.init();
+</script>
+
+</body>
+</html>

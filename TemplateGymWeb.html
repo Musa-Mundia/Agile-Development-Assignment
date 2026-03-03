@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>XGym</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="site-header">
+    <div class="logo">Pulse<span>Fit</span></div>
+    <nav class="nav-links">
+      <a href="#hero">Home</a>
+      <a href="#features">Features</a>
+      <a href="#authSection">Login</a>
+    </nav>
+  </header>
+
+  <main>
+    <!-- Hero -->
+    <section id="hero" class="hero">
+      <div class="hero-overlay"></div>
+      <div class="hero-content glass-3d">
+        <h1>Train Smarter. Track Better.</h1>
+        <p>Role-based gym portal for clients and trainers with live class scheduling.</p>
+        <div class="hero-actions">
+          <button class="btn-3d" id="heroLoginBtn">Login</button>
+          <button class="btn-3d secondary" id="heroRegisterBtn">Register</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Features -->
+    <section id="features" class="features">
+      <div class="feature-card glass-3d">
+        <h3>Smart Scheduling</h3>
+        <p>Create, manage, and enroll in classes with a few clicks.</p>
+      </div>
+      <div class="feature-card glass-3d">
+        <h3>Trainer Management</h3>
+        <p>Assign trainers, track hours, and keep workloads balanced.</p>
+      </div>
+      <div class="feature-card glass-3d">
+        <h3>Client Experience</h3>
+        <p>Clients see only what matters: classes, enrollments, and progress.</p>
+      </div>
+    </section>
+
+    <!-- Auth + App Panels -->
+    <section class="portal">
+      <div id="authSection" class="auth-grid">
+        <div class="card glass-3d">
+          <h2>Login</h2>
+          <label>Email</label>
+          <input type="email" id="loginEmail" />
+          <label>Password</label>
+          <input type="password" id="loginPassword" />
+          <button class="btn-3d" id="loginBtn">Login</button>
+        </div>
+
+        <div class="card glass-3d">
+          <h2>Register</h2>
+          <label>Name</label>
+          <input type="text" id="regName" />
+          <label>Email</label>
+          <input type="email" id="regEmail" />
+          <label>Password</label>
+          <input type="password" id="regPassword" />
+          <label>Role</label>
+          <select id="regRole">
+            <option value="client">Client</option>
+            <option value="trainer">Trainer</option>
+          </select>
+          <button class="btn-3d secondary" id="registerBtn">Register</button>
+        </div>
+      </div>
+
+      <div id="app" class="hidden app-layout">
+        <div id="nav" class="app-nav glass-3d">
+          <div>
+            <span id="welcome"></span>
+            <span class="role-badge" id="roleBadge"></span>
+          </div>
+          <button class="btn-3d small" id="logoutBtn">Logout</button>
+        </div>
+
+        <div class="app-panels">
+          <!-- Trainer/staff panel -->
+          <div id="trainerPanel" class="hidden panel glass-3d">
+            <h2>Trainer / Staff Console</h2>
+
+            <div class="sub-panel">
+              <h3>Class Management</h3>
+              <label>Class Name</label>
+              <input type="text" id="className" />
+              <label>Day</label>
+              <input type="text" id="classDay" placeholder="e.g. Monday" />
+              <label>Time</label>
+              <input type="text" id="classTime" placeholder="e.g. 18:00" />
+              <button class="btn-3d" id="addClassBtn">Add Class</button>
+            </div>
+
+            <div class="sub-panel">
+              <h3>Assign Trainer & Track Hours</h3>
+              <label>Select Class</label>
+              <select id="assignClassSelect"></select>
+              <label>Select Trainer</label>
+              <select id="assignTrainerSelect"></select>
+              <label>Hours</label>
+              <input type="number" id="assignHours" min="1" />
+              <button class="btn-3d secondary" id="assignTrainerBtn">Assign Trainer</button>
+            </div>
+
+            <div class="sub-panel">
+              <h3>All Classes</h3>
+              <div id="classList" class="scroll-area"></div>
+            </div>
+
+            <div class="sub-panel">
+              <h3>Trainer Hours Summary</h3>
+              <div id="trainerHoursSummary" class="scroll-area"></div>
+            </div>
+          </div>
+
+          <!-- Client panel -->
+          <div id="clientPanel" class="hidden panel glass-3d">
+            <h2>Client Dashboard</h2>
+
+            <div class="sub-panel">
+              <h3>Available Classes</h3>
+              <div id="clientClassList" class="scroll-area"></div>
+            </div>
+
+            <div class="sub-panel">
+              <h3>My Enrollments</h3>
+              <div id="clientEnrollments" class="scroll-area"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>XGym – Trainer Dashboard</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+
+<body>
+  <header class="site-header">
+    <div class="logo">Pulse<span>Fit</span></div>
+    <nav class="nav-links">
+      <a href="index.html">Home</a>
+      <a href="trainer.html" class="active">Trainer Dashboard</a>
+      <button class="btn-3d small" id="logoutBtn">Logout</button>
+    </nav>
+  </header>
+
+  <main class="trainer-layout">
+
+    <!-- Trainer Info -->
+    <section class="glass-3d trainer-header">
+      <h1>Trainer Console</h1>
+      <p id="trainerName"></p>
+    </section>
+
+    <div class="trainer-grid">
+
+      <!-- Assigned Clients -->
+      <section class="glass-3d panel">
+        <h2>My Clients</h2>
+        <div id="trainerClientList" class="scroll-area"></div>
+      </section>
+
+      <!-- Client Progress -->
+      <section class="glass-3d panel">
+        <h2>Client Workout Progress</h2>
+        <label>Select Client</label>
+        <select id="clientProgressSelect"></select>
+
+        <div id="clientProgressView" class="scroll-area"></div>
+      </section>
+
+      <!-- Add Workout Entry -->
+      <section class="glass-3d panel">
+        <h2>Add Workout Entry</h2>
+
+        <label>Client</label>
+        <select id="workoutClientSelect"></select>
+
+        <label>Exercise</label>
+        <input type="text" id="workoutExercise" placeholder="Bench Press" />
+
+        <label>Sets</label>
+        <input type="number" id="workoutSets" min="1" />
+
+        <label>Reps</label>
+        <input type="number" id="workoutReps" min="1" />
+
+        <label>Weight (kg)</label>
+        <input type="number" id="workoutWeight" min="0" />
+
+        <label>Notes</label>
+        <textarea id="workoutNotes"></textarea>
+
+        <button class="btn-3d" id="addWorkoutBtn">Add Workout</button>
+      </section>
+
+      <!-- All Workout Logs -->
+      <section class="glass-3d panel">
+        <h2>All Workout Logs</h2>
+        <div id="allWorkoutLogs" class="scroll-area"></div>
+      </section>
+
+    </div>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
