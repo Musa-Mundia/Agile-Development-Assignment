@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Client</title>
+<!--You can remove the CSS and JS for clarity but would cause clutter issues and multiple files-->
+<style>
+    body {
+        margin: 0;
+        background: #030303;
+        font-family: 'Poppins', sans-serif;
+        overflow-x: hidden;
+        color: white;
+    }
+
+    /* Particle System */
+    canvas {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        pointer-events: none;
+        z-index: -3;
+    }
+
+    #p1 { opacity: 0.25; }
+    #p2 { opacity: 0.45; }
+    #p3 { opacity: 0.9; }
+
+    /* Fog layer */
+    .fog {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        background: radial-gradient(circle at 50% 20%, rgba(255,0,80,0.15), transparent 70%);
+        filter: blur(80px);
+        z-index: -2;
+        animation: fogMove 12s infinite alternate ease-in-out;
+    }
+
+    @keyframes fogMove {
+        0% { transform: translateY(-40px); }
+        100% { transform: translateY(40px); }
+    }
+
+    /* Sidebar (static, no sliding) */
+    .sidebar {
+        width: 260px;
+        height: 100vh;
+        background: rgba(255,255,255,0.03);
+        backdrop-filter: blur(18px);
+        border-right: 1px solid rgba(255,255,255,0.08);
+        box-shadow: 0 0 40px rgba(255,0,80,0.25);
+        padding: 40px 25px;
+        position: fixed;
+        top: 0;
+        left: 0;
+        opacity: 0;
+    }
+
+    .sidebar h2 {
+        font-size: 1.8rem;
+        margin-bottom: 40px;
+        letter-spacing: 3px;
+        text-transform: uppercase;
+    }
+
+    .nav-item {
+        margin: 22px 0;
+        font-size: 1.15rem;
+        opacity: 0.75;
+        cursor: pointer;
+        transition: 0.3s;
+    }
+
+    .nav-item:hover {
+        opacity: 1;
+        transform: translateX(10px);
+        color: #ff4d4d;
+    }
+
+    /* Main content */
+    .content {
+        margin-left: 260px;
+        padding: 50px;
+        opacity: 0;
+    }
+
+    .content h1 {
+        font-size: 3.2rem;
+        margin-bottom: 10px;
+        letter-spacing: 4px;
+    }
+
+    .content p {
+        opacity: 0.75;
+        max-width: 700px;
+    }
+
+    /* Glass cards */
+    .grid {
+        margin-top: 50px;
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 25px;
+    }
+
+    .card {
+        background: rgba(255,255,255,0.04);
+        padding: 25px;
+        border-radius: 14px;
+        backdrop-filter: blur(12px);
+        border: 1px solid rgba(255,255,255,0.08);
+        box-shadow: 0 0 25px rgba(255,0,80,0.2);
+        transition: 0.3s;
+        cursor: pointer;
+    }
+
+    .card:hover {
+        transform: translateY(-10px);
+        box-shadow: 0 0 35px rgba(255,0,80,0.35);
+    }
+
+    .card h3 {
+        margin: 0 0 10px;
+        font-size: 1.4rem;
+    }
+
+    .card p {
+        opacity: 0.7;
+        font-size: 0.95rem;
+    }
+</style>
+</head>
+
+<body>
+
+<!-- Particle layers -->
+<canvas id="p1"></canvas>
+<canvas id="p2"></canvas>
+<canvas id="p3"></canvas>
+
+<!-- Fog -->
+<div class="fog"></div>
+
+<!-- Sidebar -->
+<div class="sidebar" id="sidebar">
+    <h2>Client</h2>
+    <div class="nav-item" id="nav-dashboard">Dashboard</div>
+    <div class="nav-item" data-panel="panel-cart">My Cart <span id="cart-badge" style="display:none;background:#ff0033;color:#fff;border-radius:50%;padding:2px 7px;font-size:0.75rem;margin-left:6px">0</span></div>
+    <div class="nav-item" data-panel="panel-trainers">X-Gym Offerings</div>
+    <div class="nav-item" data-panel="panel-workouts">Training</div>
+    <div class="nav-item" data-panel="panel-meals">Meals</div>
+    <div class="nav-item" data-panel="panel-membership">Membership</div>
+    <div class="nav-item" data-panel="panel-settings">Settings</div>
+    <div id="logout-btn" class="nav-item" style="margin-top:auto;color:#ff4d4d;cursor:pointer">Logout</div>
+</div>
+
+<!-- Main content -->
+<div class="content" id="content">
+    <h1 id="client-greeting">Hello, {username}</h1>
+    <p>Your personalised training hub. Track progress, manage your membership, and explore new workouts.</p>
+
+    <div class="grid">
+        <div class="card" id="card-cart"><h3>My Cart</h3><p>View and manage your cart.</p></div>
+        <div class="card" id="card-workouts"><h3>Workout Plans</h3><p>Your training routines.</p></div>
+        <div class="card" id="card-membership"><h3>Membership</h3><p>Manage your subscription.</p></div>
+        <div class="card" id="card-progress"><h3>Progress</h3><p>Track lifts &amp; stats.</p></div>
+        <div class="card" id="card-store"><h3>Store / Trainers</h3><p>Supplements, gear &amp; trainers.</p></div>
+        <div class="card" id="card-settings"><h3>Settings</h3><p>Profile &amp; preferences.</p></div>
+    </div>
+
+    <!-- Panels populated by BackendMain.js -->
+    <div id="panel-trainers"    class="xgym-panel" style="display:none;margin-top:40px"></div>
+    <div id="panel-workouts"    class="xgym-panel" style="display:none;margin-top:40px"></div>
+    <div id="panel-progress"    class="xgym-panel" style="display:none;margin-top:40px"></div>
+    <div id="panel-meals"       class="xgym-panel" style="display:none;margin-top:40px"></div>
+    <div id="panel-membership"  class="xgym-panel" style="display:none;margin-top:40px"></div>
+    <div id="panel-cart"        class="xgym-panel" style="display:none;margin-top:40px"></div>
+    <div id="panel-settings"    class="xgym-panel" style="display:none;margin-top:40px">
+      <h2 style="color:#ff4d4d">Settings</h2>
+      <p>Profile &amp; preferences coming soon.</p>
+    </div>
+</div>
+
+<!-- GSAP -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+
+<!-- Firebase compat SDKs -->
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
+<!-- X-Gym backend -->
+<script src="BackendMain.js"></script>
+
+<script>
+/* Particle generator */
+function particleLayer(canvas, count, speed) {
+    const ctx = canvas.getContext("2d");
+    let w, h;
+
+    function resize() {
+        w = canvas.width = window.innerWidth;
+        h = canvas.height = window.innerHeight;
+    }
+    resize();
+    window.addEventListener("resize", resize);
+
+    const particles = [];
+    for (let i = 0; i < count; i++) {
+        particles.push({
+            x: Math.random() * w,
+            y: Math.random() * h,
+            size: Math.random() * 2 + 1,
+            vx: (Math.random() - 0.5) * speed,
+            vy: (Math.random() - 0.5) * speed
+        });
+    }
+
+    function animate() {
+        ctx.clearRect(0, 0, w, h);
+        particles.forEach(p => {
+            p.x += p.vx;
+            p.y += p.vy;
+
+            if (p.x < 0) p.x = w;
+            if (p.x > w) p.x = 0;
+            if (p.y < 0) p.y = h;
+            if (p.y > h) p.y = 0;
+
+            ctx.fillStyle = "rgba(255, 0, 60, 0.8)";
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+            ctx.fill();
+        });
+        requestAnimationFrame(animate);
+    }
+    animate();
+}
+
+particleLayer(document.getElementById("p1"), 40, 0.2);
+particleLayer(document.getElementById("p2"), 70, 0.4);
+particleLayer(document.getElementById("p3"), 120, 0.7);
+
+/* GSAP entrance */
+gsap.to("#sidebar", {
+    opacity: 1,
+    duration: 1.4,
+    ease: "power3.out"
+});
+
+gsap.to("#content", {
+    opacity: 1,
+    duration: 1.4,
+    delay: 0.3,
+    ease: "power3.out"
+});
+</script>
+
+</body>
+</html>
