@@ -1,0 +1,1401 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>XGYM — Shop</title>
+
+<!--  Google Fonts 
+     Bebas Neue  → bold display/heading font (gym-style)
+     Nunito      → clean, friendly body font that pairs well with pastel themes
+      -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Nunito:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+:root {
+  /* Backgrounds */
+  --bg:          #fff5f5;      /* soft rose-white page background */
+  --surface:     #ffffff;      /* card / panel surfaces */
+  --surface2:    #fff0f0;      /* slightly tinted secondary surface */
+
+  /* Borders */
+  --border:      rgba(220,80,80,0.12);   /* subtle border */
+  --border2:     rgba(220,80,80,0.22);   /* slightly stronger border */
+
+  /* Brand colours */
+  --accent:      #e86b6b;      /* pastel red — primary accent */
+  --accent-dark: #d45050;      /* deeper red — hover/active */
+  --accent-bg:   #fde8e8;      /* light rose tint — backgrounds */
+  --accent2:     #f4a0a0;      /* softer pink — badge, highlights */
+
+  /* Text */
+  --text:        #2a1a1a;      /* near-black with warm tint */
+  --muted:       #a08080;      /* muted warm grey */
+
+  /* Status colours */
+  --success:     #5cb85c;
+  --danger:      #d9534f;
+  --warn:        #f0ad4e;
+
+  /* Layout */
+  --radius:      14px;
+  --radius-sm:   9px;
+  --cart-w:      370px;
+
+  /* Fonts */
+  --font-d:      'Bebas Neue', sans-serif;     /* display */
+  --font-b:      'Nunito', sans-serif;          /* body    */
+}
+
+/*  Reset & Base 
+   Strip browser defaults so layout is consistent across Chrome, Firefox, Safari
+    */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-b);
+  font-size: 15px;
+  line-height: 1.6;
+  overflow-x: hidden;
+}
+button { font-family: var(--font-b); cursor: pointer; border: none; outline: none; }
+input, select { font-family: var(--font-b); outline: none; }
+img { display: block; }
+a { text-decoration: none; color: inherit; }
+
+/*  Custom Scrollbar */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: var(--surface2); }
+::-webkit-scrollbar-thumb { background: var(--accent2); border-radius: 4px; }
+
+/* NAVIGATION BAR*/
+.nav {
+  position: sticky; top: 0; z-index: 100;
+  background: rgba(255,245,245,0.93);
+  backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--border2);
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 2rem; height: 62px;
+}
+
+/* Brand name — "X" in accent colour, "GYM" in dark text */
+.nav-brand {
+  font-family: var(--font-d);
+  font-size: 30px; letter-spacing: 0.04em;
+  color: var(--text);
+}
+.nav-brand span { color: var(--accent); }
+.nav-right { display: flex; align-items: center; gap: 10px; }
+
+/* "Sign in" link — links to the existing login page.
+   Change the href in the HTML to match the login page URL. */
+.btn-login {
+  height: 34px; padding: 0 16px; border-radius: var(--radius-sm);
+  background: transparent; border: 1px solid var(--border2);
+  color: var(--muted); font-size: 13px; font-weight: 600;
+  transition: all 0.15s; text-decoration: none;
+  display: flex; align-items: center;
+}
+.btn-login:hover { background: var(--accent-bg); border-color: var(--accent); color: var(--accent); }
+
+/* Cart toggle button — fixed in nav, triggers the slide-out panel */
+.cart-toggle {
+  position: relative; height: 36px; padding: 0 18px;
+  background: var(--accent); border-radius: var(--radius-sm);
+  color: #fff; font-size: 13px; font-weight: 700;
+  display: flex; align-items: center; gap: 8px;
+  transition: transform 0.12s, background 0.12s;
+  letter-spacing: 0.03em;
+}
+.cart-toggle:hover { transform: translateY(-1px); background: var(--accent-dark); }
+.cart-icon { font-size: 16px; }
+
+/* Red badge counter on the cart button — updates every time an item is added */
+.cart-badge {
+  position: absolute; top: -6px; right: -6px;
+  width: 18px; height: 18px; border-radius: 50%;
+  background: #c0392b; color: #fff;
+  font-size: 10px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+  border: 2px solid var(--bg);
+  transition: transform 0.2s;
+}
+/* "bump" class is added/removed in JS to animate the badge on item add */
+.cart-badge.bump { transform: scale(1.45); }
+
+/* HERO SECTION
+   Large headline + tagline at the top of the shop page. */
+.hero {
+  padding: 5rem 2rem 3.5rem;
+  text-align: center;
+  /* Soft rose glow radiating from top-centre */
+  background: radial-gradient(ellipse 80% 55% at 50% 0%, rgba(232,107,107,0.14) 0%, transparent 65%);
+}
+.hero-tag {
+  display: inline-block; margin-bottom: 1rem;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--accent); border: 1px solid rgba(232,107,107,0.35);
+  background: var(--accent-bg); padding: 4px 14px; border-radius: 20px;
+}
+.hero h1 {
+  font-family: var(--font-d); font-size: clamp(54px, 9vw, 96px);
+  letter-spacing: 0.04em; line-height: 0.92;
+  color: var(--text); margin-bottom: 1rem;
+}
+/* Highlighted word in the hero uses the accent colour */
+.hero h1 em { font-style: normal; color: var(--accent); }
+.hero p { font-size: 15px; color: var(--muted); max-width: 400px; margin: 0 auto; }
+
+/* SECTION + PRODUCT GRID
+   Reusable section wrapper used for both Memberships and Shop sections.
+   Product cards use CSS Grid — auto-fills columns based on available width. */
+.section { padding: 3rem 2rem; max-width: 1100px; margin: 0 auto; }
+.section-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 1.5rem; }
+.section-head h2 {
+  font-family: var(--font-d); font-size: 30px; letter-spacing: 0.03em; color: var(--text);
+}
+.section-head span { font-size: 13px; color: var(--muted); }
+
+/* Responsive grid: fills columns at 220px min, stretches to fill space */
+.product-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+/* Individual product card */
+.product-card {
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  border-radius: var(--radius);
+  overflow: hidden;
+  transition: border-color 0.2s, transform 0.2s, box-shadow 0.2s;
+  display: flex; flex-direction: column;
+}
+.product-card:hover {
+  border-color: var(--accent2);
+  transform: translateY(-4px);
+  box-shadow: 0 8px 24px rgba(232,107,107,0.12);
+}
+
+/* Emoji icon placeholder — replace with real <img> */
+.product-img-placeholder {
+  width: 100%; aspect-ratio: 1/1;
+  background: var(--accent-bg);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 54px;
+}
+/* Real product image class — uncomment/use with actual photos */
+.product-img {
+  width: 100%; aspect-ratio: 1/1; object-fit: cover;
+  background: var(--surface2);
+}
+
+.product-body { padding: 14px; flex: 1; display: flex; flex-direction: column; gap: 8px; }
+.product-tag {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em;
+  color: var(--accent); font-weight: 700;
+  background: var(--accent-bg); padding: 2px 8px; border-radius: 4px;
+  width: fit-content;
+}
+.product-name { font-size: 15px; font-weight: 700; color: var(--text); line-height: 1.3; }
+.product-desc { font-size: 12px; color: var(--muted); line-height: 1.5; flex: 1; }
+.product-footer { display: flex; align-items: center; justify-content: space-between; margin-top: 4px; }
+.product-price {
+  font-family: var(--font-d); font-size: 24px; letter-spacing: 0.02em;
+  color: var(--accent);
+}
+.product-price small { font-size: 12px; color: var(--muted); font-family: var(--font-b); }
+
+/* "Add to cart" button on each product card */
+.btn-add {
+  height: 32px; padding: 0 14px; border-radius: var(--radius-sm);
+  background: var(--accent); color: #fff;
+  font-size: 12px; font-weight: 700; letter-spacing: 0.04em;
+  transition: background 0.12s, transform 0.1s;
+}
+.btn-add:hover { background: var(--accent-dark); }
+.btn-add:active { transform: scale(0.95); }
+/* Green confirmation state when item is added — reverts after 1.5s */
+.btn-add.added { background: var(--success); }
+
+/*CART WIDGET (SLIDE-OUT PANEL)
+   Structure:
+     .cart-widget
+       .cart-header     ← title + close button
+       .cart-items      ← scrollable list of added items
+       .cart-footer     ← subtotal, total, clear + checkout buttons
+  */
+.cart-widget {
+  position: fixed; top: 0; right: 0; bottom: 0;
+  width: var(--cart-w); z-index: 200;
+  background: var(--surface);
+  border-left: 1px solid var(--border2);
+  display: flex; flex-direction: column;
+  transform: translateX(0);
+  transition: transform 0.28s cubic-bezier(.4,0,.2,1);
+  box-shadow: -6px 0 36px rgba(232,107,107,0.1);
+}
+/* Hidden state — slides fully off-screen to the right */
+.cart-widget.cart-minimized { transform: translateX(100%); }
+
+.cart-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 18px 20px; border-bottom: 1px solid var(--border);
+  background: var(--accent-bg);
+}
+.cart-header h3 { font-family: var(--font-d); font-size: 22px; letter-spacing: 0.04em; color: var(--text); }
+.cart-count { font-size: 12px; color: var(--muted); margin-top: 1px; }
+
+/* Close (×) button inside the cart header */
+.close-cart {
+  width: 30px; height: 30px; border-radius: var(--radius-sm);
+  background: var(--surface); border: 1px solid var(--border2);
+  color: var(--muted); font-size: 18px;
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.15s;
+}
+.close-cart:hover { background: var(--accent-bg); color: var(--accent); border-color: var(--accent); }
+
+/* Scrollable area that holds all cart-item rows */
+.cart-items {
+  flex: 1; overflow-y: auto; padding: 12px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+
+/* Empty cart placeholder shown when no items exist */
+.cart-empty {
+  flex: 1; display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  text-align: center; padding: 2rem; color: var(--muted);
+}
+.cart-empty-icon { font-size: 44px; margin-bottom: 12px; opacity: 0.35; }
+
+/*  Cart Item Row 
+   Each item in the cart: [icon] [name + price + qty controls] [× remove]
+    */
+.cart-item {
+  display: flex; gap: 10px; align-items: flex-start;
+  background: var(--surface2); border-radius: var(--radius-sm); padding: 10px;
+  border: 1px solid var(--border);
+  /* Slide-in animation when item first appears */
+  animation: slideIn 0.2s ease;
+}
+@keyframes slideIn { from { opacity: 0; transform: translateX(10px); } }
+
+/* Emoji icon for cart items — same emoji as the product card */
+.cart-item-img-placeholder {
+  width: 50px; height: 50px; border-radius: 8px; flex-shrink: 0;
+  background: var(--accent-bg); display: flex; align-items: center;
+  justify-content: center; font-size: 22px;
+}
+
+.cart-item-details { flex: 1; min-width: 0; }
+.cart-item-details h4 {
+  font-size: 13px; font-weight: 700; color: var(--text);
+  margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* Unit price shown below the item name */
+.cart-item-details p { font-size: 12px; color: var(--accent); font-weight: 600; }
+/* Per-line subtotal (qty × price) — helps user verify the maths at a glance */
+.cart-item-subtotal { font-size: 10px; color: var(--muted); margin-top: 1px; }
+
+/* Quantity controls: [−] [count] [+] */
+.cart-controls { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+.quantity-btn {
+  width: 22px; height: 22px; border-radius: 4px;
+  background: var(--accent-bg); border: 1px solid var(--border2);
+  color: var(--accent); font-size: 15px;
+  display: flex; align-items: center; justify-content: center;
+  transition: background 0.1s;
+}
+.quantity-btn:hover { background: var(--accent2); color: #fff; }
+.cart-controls span { min-width: 20px; text-align: center; font-size: 13px; font-weight: 700; }
+
+/* Remove (×) button — far right of each cart item */
+.remove-item {
+  background: none; color: var(--muted); font-size: 17px;
+  line-height: 1; padding: 2px; border-radius: 4px;
+  transition: color 0.12s; flex-shrink: 0; align-self: flex-start;
+}
+.remove-item:hover { color: var(--danger); }
+
+/*  Cart Footer 
+   Summary rows + action buttons (Clear / Checkout)
+    */
+.cart-footer { padding: 14px 18px 18px; border-top: 1px solid var(--border); }
+.cart-summary { margin-bottom: 12px; }
+.cart-summary-row {
+  display: flex; justify-content: space-between;
+  font-size: 13px; color: var(--muted); margin-bottom: 4px;
+}
+/* Bold total row at the bottom of the summary */
+.cart-summary-row.total {
+  font-size: 15px; font-weight: 700; color: var(--text);
+  border-top: 1px solid var(--border); padding-top: 8px; margin-top: 4px;
+}
+.cart-summary-row.total span:last-child {
+  color: var(--accent); font-family: var(--font-d); font-size: 24px; letter-spacing: 0.02em;
+}
+.cart-actions { display: flex; gap: 8px; }
+
+/* "Clear all" ghost button, turns red on hover */
+.clear-btn {
+  height: 38px; padding: 0 14px; border-radius: var(--radius-sm);
+  background: transparent; border: 1px solid var(--border2);
+  color: var(--muted); font-size: 12px; font-weight: 600;
+  transition: all 0.15s;
+}
+.clear-btn:hover { border-color: var(--danger); color: var(--danger); }
+
+/* "Checkout" — primary action button*/
+.checkout-btn {
+  flex: 1; height: 38px; border-radius: var(--radius-sm);
+  background: var(--accent); color: #fff; font-size: 13px; font-weight: 700;
+  letter-spacing: 0.04em; transition: background 0.12s;
+}
+.checkout-btn:hover { background: var(--accent-dark); }
+.checkout-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Dark semi-transparent overlay behind the cart panel on mobile/narrow screens */
+.cart-overlay {
+  display: none; position: fixed; inset: 0; z-index: 190;
+  background: rgba(180,60,60,0.25);
+}
+.cart-overlay.visible { display: block; }
+
+/*  Toast Notification
+   Small notif. that floats above the bottom of the screen briefly after actions.
+   Created and destroyed in JS — not permanently in the DOM.
+    */
+.cart-notification {
+  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+  background: var(--accent); color: #fff;
+  padding: 9px 20px; border-radius: 20px;
+  font-size: 13px; font-weight: 600;
+  z-index: 999; pointer-events: none;
+  animation: notifIn 0.2s ease, notifOut 0.3s 2.7s ease forwards;
+}
+@keyframes notifIn  { from { opacity: 0; transform: translateX(-50%) translateY(10px); } }
+@keyframes notifOut { to   { opacity: 0; transform: translateX(-50%) translateY(10px); } }
+
+/* MODAL SYSTEM
+   Shared styles for the checkout and order history modals.
+   Each modal is a .modal-backdrop (full-screen overlay) containing a .modal box.
+   Toggled open/closed by adding/removing the .open class via JS.
+  */
+.modal-backdrop {
+  display: none; position: fixed; inset: 0; z-index: 300;
+  background: rgba(100,20,20,0.45); backdrop-filter: blur(4px);
+  align-items: center; justify-content: center; padding: 1rem;
+}
+.modal-backdrop.open { display: flex; }
+
+.modal {
+  background: var(--surface); border: 1px solid var(--border2);
+  border-radius: 18px; width: 100%; max-width: 500px;
+  max-height: 90vh; overflow-y: auto;
+  animation: modalIn 0.22s cubic-bezier(.34,1.3,.64,1);
+}
+@keyframes modalIn { from { opacity: 0; transform: scale(0.94) translateY(14px); } }
+
+.modal-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 20px 24px 16px; border-bottom: 1px solid var(--border);
+  background: var(--accent-bg);
+}
+.modal-header h2 { font-family: var(--font-d); font-size: 24px; letter-spacing: 0.04em; color: var(--text); }
+.modal-close {
+  width: 30px; height: 30px; border-radius: 7px;
+  background: var(--surface); border: 1px solid var(--border2);
+  color: var(--muted); font-size: 17px;
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.15s;
+}
+.modal-close:hover { background: var(--accent-bg); color: var(--accent); }
+.modal-body { padding: 20px 24px 26px; }
+
+/*  Shared Form Styles (used inside checkout modal) 
+   .form-field  → label + input wrapper
+   .form-row    → two inputs side by side (e.g. expiry + CVV)
+   .form-input  → base input style
+   .form-error  → red error message below an input
+    */
+.form-field { margin-bottom: 14px; }
+.form-label {
+  display: block; font-size: 11px; font-weight: 700;
+  color: var(--muted); margin-bottom: 5px;
+  letter-spacing: 0.06em; text-transform: uppercase;
+}
+.form-input {
+  width: 100%; height: 40px; padding: 0 12px;
+  background: var(--surface2); border: 1px solid var(--border2);
+  border-radius: var(--radius-sm); color: var(--text); font-size: 14px;
+  transition: border-color 0.15s;
+}
+.form-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(232,107,107,0.1); }
+/* Error state — red border shown when validation fails */
+.form-input.error { border-color: var(--danger); }
+.form-input::placeholder { color: #c4a8a8; }
+.form-error { font-size: 11px; color: var(--danger); margin-top: 4px; min-height: 14px; }
+.form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+/* Checkbox + label row (e.g. "save card", DD authorisation) */
+.form-check {
+  display: flex; align-items: flex-start; gap: 8px;
+  font-size: 12px; color: var(--muted); margin-bottom: 16px; cursor: pointer; line-height: 1.5;
+}
+.form-check input { margin-top: 2px; accent-color: var(--accent); flex-shrink: 0; }
+
+/* Primary button used inside modals (Pay / Set up DD / Done) */
+.btn-primary {
+  width: 100%; height: 44px; border-radius: var(--radius-sm);
+  background: var(--accent); color: #fff; font-size: 14px; font-weight: 700;
+  letter-spacing: 0.04em; transition: background 0.12s, opacity 0.12s;
+}
+.btn-primary:hover { background: var(--accent-dark); }
+.btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* Alert banners inside modals */
+.alert { padding: 10px 14px; border-radius: var(--radius-sm); font-size: 13px; margin-bottom: 14px; }
+.alert-danger  { background: #fdeaea; border: 1px solid #f4aaaa; color: #c0392b; }
+.alert-success { background: #eafaf0; border: 1px solid #a9dfbf; color: #1e8449; }
+.alert-info    { background: var(--accent-bg); border: 1px solid var(--accent2); color: var(--accent-dark); }
+
+/*CHECKOUT MODAL SPECIFIC STYLES
+/* Tabs: "Pay" | "Order summary" */
+.checkout-tabs {
+  display: flex; gap: 4px; background: var(--surface2);
+  border-radius: 9px; padding: 4px; margin-bottom: 20px;
+}
+.checkout-tab {
+  flex: 1; height: 30px; border-radius: 6px;
+  background: transparent; color: var(--muted); font-size: 13px; font-weight: 600;
+  transition: all 0.15s;
+}
+.checkout-tab.active { background: var(--surface); color: var(--accent); box-shadow: 0 1px 4px rgba(232,107,107,0.12); }
+
+/* Payment method selector (Card | Direct Debit) */
+.method-row { display: flex; gap: 8px; margin-bottom: 20px; }
+.method-btn {
+  flex: 1; padding: 10px 12px; border-radius: var(--radius-sm);
+  background: var(--surface2); border: 1px solid var(--border);
+  text-align: left; cursor: pointer; transition: all 0.15s;
+}
+/* Active/selected method gets a rose-tinted highlight */
+.method-btn.active { border-color: var(--accent); background: var(--accent-bg); }
+.method-btn-label { font-size: 13px; font-weight: 700; display: block; color: var(--text); }
+.method-btn-sub   { font-size: 11px; color: var(--muted); display: block; margin-top: 2px; }
+
+/* Order summary lines inside checkout */
+.order-items { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+.order-item  { display: flex; justify-content: space-between; align-items: center; font-size: 13px; }
+.order-item-name  { color: var(--muted); }
+.order-item-price { font-weight: 700; color: var(--text); }
+.order-divider { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
+.order-total { display: flex; justify-content: space-between; font-weight: 700; font-size: 15px; }
+.order-total span:last-child { color: var(--accent); font-family: var(--font-d); font-size: 22px; }
+
+/* Direct Debit info block */
+.dd-info {
+  background: var(--accent-bg); border: 1px solid var(--border2);
+  border-radius: var(--radius-sm); padding: 12px; margin-bottom: 14px;
+  font-size: 12px; color: var(--muted); line-height: 1.6;
+}
+
+/*  Payment Success Screen 
+   Shown inside the checkout modal after a successful payment
+    */
+.checkout-success { text-align: center; padding: 1rem 0; }
+.success-icon     { font-size: 52px; margin-bottom: 12px; }
+.success-title    { font-family: var(--font-d); font-size: 28px; letter-spacing: 0.04em; margin-bottom: 6px; color: var(--text); }
+.success-sub      { font-size: 14px; color: var(--muted); margin-bottom: 20px; }
+
+/* Receipt box — shows order ID, date, amount, status */
+.receipt-box {
+  background: var(--surface2); border: 1px solid var(--border2);
+  border-radius: var(--radius-sm); padding: 14px; text-align: left;
+  font-size: 13px; margin-bottom: 20px;
+}
+.receipt-row { display: flex; justify-content: space-between; padding: 3px 0; color: var(--muted); }
+.receipt-row span:last-child { color: var(--text); font-weight: 600; }
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   ORDER HISTORY MODAL SPECIFIC STYLES
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+/* Summary stat cards at the top of history (total spent / orders / failed) */
+.history-stats { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; margin-bottom: 20px; }
+.hstat {
+  background: var(--accent-bg); border-radius: var(--radius-sm);
+  padding: 12px; border: 1px solid var(--border);
+}
+.hstat-label { font-size: 11px; color: var(--muted); margin-bottom: 4px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+.hstat-val   { font-family: var(--font-d); font-size: 22px; letter-spacing: 0.02em; color: var(--text); }
+
+/* Individual history rows */
+.history-list  { display: flex; flex-direction: column; gap: 6px; }
+.history-item  {
+  display: flex; align-items: center; justify-content: space-between;
+  background: var(--surface2); border-radius: var(--radius-sm); padding: 12px 14px;
+  border: 1px solid var(--border);
+}
+.h-left  { flex: 1; min-width: 0; }
+.h-desc  { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.h-meta  { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.h-right { text-align: right; flex-shrink: 0; padding-left: 12px; }
+.h-amount { font-family: var(--font-d); font-size: 18px; letter-spacing: 0.02em; color: var(--text); }
+
+/* Status badges — colour-coded pills next to each history row */
+.badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; margin-top: 3px; }
+.badge-paid     { background: #eafaf0; color: #1e8449; }
+.badge-failed   { background: #fdeaea; color: #c0392b; }
+.badge-pending  { background: #fef9e7; color: #b7950b; }
+.badge-refunded { background: var(--accent-bg); color: var(--accent-dark); }
+
+/*  Footer  */
+footer {
+  text-align: center; padding: 3rem 2rem 2rem;
+  font-size: 12px; color: var(--muted);
+  border-top: 1px solid var(--border);
+}
+</style>
+</head>
+<body>
+
+<!--NAVIGATION-->
+<nav class="nav">
+  <!-- Brand: "X" is highlighted in red, "GYM" follows in dark text -->
+  <div class="nav-brand"><span>X</span>GYM</div>
+
+  <div class="nav-right">
+    <!-- ⚠️ UPDATE THIS HREF to point to the existing login/sign-in page -->
+    <a href="/login.html" class="btn-login">Sign in</a>
+
+    <!-- Orders button (shown/hidden by JS depending on session state) -->
+    <button class="btn-login" id="historyBtn" style="display:none; color:var(--accent); border-color:var(--accent);" onclick="openHistory()">My orders</button>
+
+    <!-- Cart toggle — badge updates automatically as items are added -->
+    <button class="cart-toggle" onclick="toggleCart()">
+      <span class="cart-icon">🛒</span>
+      <span>Cart</span>
+      <span class="cart-badge">0</span>
+    </button>
+  </div>
+</nav>
+
+<!--
+     HERO — Page headline and tagline
+ -->
+<div class="hero">
+  <div class="hero-tag">Now open · Birmingham</div>
+  <h1>TRAIN<br><em>HARDER</em></h1>
+  <p>Memberships, gear, and supplements — everything you need to push further.</p>
+</div>
+
+<!--
+     PRODUCT SECTIONS
+     Two grids: Memberships (monthly plans) and Shop (physical items).
+     Products are rendered by JS from the MEMBERSHIPS and SHOP_ITEMS arrays.
+     To add/remove products, edit those arrays in the <script> section below.
+    -->
+<main class="section">
+  <!-- Memberships section -->
+  <div class="section-head">
+    <h2>Memberships</h2>
+    <span>Monthly · cancel anytime</span>
+  </div>
+  <div class="product-grid" id="membershipGrid"></div>
+
+  <!-- Shop section -->
+  <div class="section-head" style="margin-top:3rem">
+    <h2>Gym Shop</h2>
+    <span>Equipment &amp; supplements</span>
+  </div>
+  <div class="product-grid" id="shopGrid"></div>
+</main>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     CART OVERLAY
+     Semi-transparent layer behind the cart panel. Clicking it closes the cart.
+     ══════════════════════════════════════════════════════════════════════════ -->
+<div class="cart-overlay" id="cartOverlay" onclick="toggleCart()"></div>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     CART WIDGET (Slide-out panel)
+     Starts hidden off-screen (.cart-minimized).
+     Items are rendered dynamically by ShoppingCart.renderCart().
+     ══════════════════════════════════════════════════════════════════════════ -->
+<div class="cart-widget cart-minimized">
+  <div class="cart-header">
+    <div>
+      <h3>Your Cart</h3>
+      <div class="cart-count" id="cartCount">0 items</div>
+    </div>
+    <button class="close-cart" title="Close">×</button>
+  </div>
+
+  <!-- This div is populated by ShoppingCart.renderCart() -->
+  <div class="cart-items"></div>
+
+  <div class="cart-footer">
+    <div class="cart-summary">
+      <div class="cart-summary-row"><span>Subtotal</span><span id="subtotalVal">£0.00</span></div>
+      <div class="cart-summary-row"><span>Discount</span><span style="color:var(--success)">£0.00</span></div>
+      <div class="cart-summary-row total">
+        <span>Total</span>
+        <!-- cartTotal span updated by calculateTotal() on every mutation -->
+        <span>£<span id="cartTotal">0.00</span></span>
+      </div>
+    </div>
+    <div class="cart-actions">
+      <button class="clear-btn">Clear all</button>
+      <button class="checkout-btn">Checkout →</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     CHECKOUT MODAL
+     Opened when the user clicks "Checkout →" in the cart.
+     Body (#checkoutBody) is fully rendered by renderCheckoutBody() in JS.
+     ══════════════════════════════════════════════════════════════════════════ -->
+<div class="modal-backdrop" id="checkoutModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h2>Checkout</h2>
+      <button class="modal-close" onclick="closeModal('checkoutModal')">×</button>
+    </div>
+    <div class="modal-body" id="checkoutBody">
+      <!-- Rendered by renderCheckoutBody() -->
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     ORDER HISTORY MODAL
+     Opened via "My orders" button in the nav (shown when user is logged in).
+     Body (#historyBody) is rendered by openHistory() in JS.
+     ══════════════════════════════════════════════════════════════════════════ -->
+<div class="modal-backdrop" id="historyModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h2>Order History</h2>
+      <button class="modal-close" onclick="closeModal('historyModal')">×</button>
+    </div>
+    <div class="modal-body" id="historyBody">
+      <!-- Rendered by openHistory() -->
+    </div>
+  </div>
+</div>
+
+<footer>© 2025 XGYM Birmingham · All rights reserved</footer>
+
+<!-- 
+     JAVASCRIPT
+     Sections (in order):
+       1. Product Data          — memberships + shop items arrays
+       2. Session / Auth state  — currentUser + ORDER_HISTORY
+       3. renderProducts()      — generates product card HTML
+       4. ShoppingCart class    — add/remove/qty/total/render/persist
+       5. toggleCart()          — open/close the cart panel
+       6. Checkout              — renderCheckoutBody, card & DD forms, submit
+       7. openHistory()         — renders order history modal
+       8. Modal helpers         — openModal / closeModal / keyboard/backdrop close
+       9. Init                  — renderProducts() + new ShoppingCart()
+    -->
+<script>
+
+/* PRODUCT DATA
+   We can edit these later based on what we agree on*/
+const MEMBERSHIPS = [
+  { id: 'm1', name: 'Basic Membership',   category: 'Membership', price: 19.99, icon: '🏋️', desc: 'Full gym floor access, lockers, 6AM–10PM daily.' },
+  { id: 'm2', name: 'Pro Membership',     category: 'Membership', price: 34.99, icon: '⚡', desc: 'Everything in Basic plus group classes and 2 guest passes/month.' },
+  { id: 'm3', name: 'Premium Membership', category: 'Membership', price: 54.99, icon: '👑', desc: 'All-access — sauna, spa, 2 PT sessions/mo, 24/7 entry.' },
+];
+
+const SHOP_ITEMS = [
+  { id: 's1', name: 'Whey Protein 1kg',     category: 'Nutrition',   price: 29.99, icon: '🥛', desc: 'Premium whey blend, 25g protein per serving. Choc & vanilla.' },
+  { id: 's2', name: 'Resistance Band Set',  category: 'Equipment',   price: 14.99, icon: '🔴', desc: '5-band progressive resistance kit with carry pouch.' },
+  { id: 's3', name: 'XGYM Water Bottle',    category: 'Accessories', price: 12.99, icon: '💧', desc: '800ml stainless steel, insulated, leak-proof lid.' },
+  { id: 's4', name: 'Gym Gloves',           category: 'Accessories', price: 9.99,  icon: '🥊', desc: 'Full-palm protection with wrist wrap support.' },
+  { id: 's5', name: 'Shaker Bottle',        category: 'Nutrition',   price: 7.99,  icon: '🧴', desc: '700ml BPA-free shaker with blender ball.' },
+  { id: 's6', name: 'Gym Bag',              category: 'Accessories', price: 34.99, icon: '🎒', desc: 'Waterproof 35L bag with wet/dry compartment.' },
+];
+
+/* SESSION / AUTH STATE
+   currentUser — set by the login page via sessionStorage/localStorage if needed.
+   sessionStorage is checked  for a saved user object so the "My orders" button
+   appears automatically if the user is already logged in.
+
+   ORDER_HISTORY — pre-seeded demo data. In production, fetch this from the API.*/
+
+/* Try to restore session from existing login system.
+   login page should store the user as JSON in sessionStorage under 'xgym_user'.
+    */
+let currentUser = null;
+try {
+  const saved = sessionStorage.getItem('xgym_user');
+  if (saved) {
+    currentUser = JSON.parse(saved);
+    /* Show "My orders" button if session exists */
+    document.getElementById('historyBtn').style.display = 'flex';
+  }
+} catch(e) { /* silently ignore if sessionStorage unavailable */ }
+
+/* Demo order history — replace with a fetch() call to the backend API */
+const ORDER_HISTORY = [
+  { id: 'ORD-0039', date: '2025-02-01', amount: 34.99, method: 'Visa •••• 4242',        status: 'paid',   items: 'Pro Membership × 1' },
+  { id: 'ORD-0028', date: '2025-01-14', amount: 42.98, method: 'Mastercard •••• 7301',  status: 'paid',   items: 'Whey Protein × 1, Shaker Bottle × 1' },
+  { id: 'ORD-0017', date: '2025-01-01', amount: 34.99, method: 'Direct Debit',          status: 'paid',   items: 'Pro Membership × 1' },
+  { id: 'ORD-0011', date: '2024-12-12', amount: 14.99, method: 'Visa •••• 4242',        status: 'paid',   items: 'Resistance Band Set × 1' },
+  { id: 'ORD-0005', date: '2024-12-01', amount: 34.99, method: 'Direct Debit',          status: 'failed', items: 'Pro Membership × 1' },
+];
+
+/*  RENDER PRODUCTS
+   Generates product card HTML from the data arrays above and injects it
+   into the two grid containers in the HTML. */
+function renderProducts() {
+  document.getElementById('membershipGrid').innerHTML = MEMBERSHIPS.map(productCard).join('');
+  document.getElementById('shopGrid').innerHTML       = SHOP_ITEMS.map(productCard).join('');
+}
+
+/* Builds a single product card HTML string.
+    JSON.stringify is used to safely pass the item object to onclick.
+   The replace(/"/g,"'") converts double-quotes to single so they don't break the HTML attribute. */
+function productCard(p) {
+  const itemJson = JSON.stringify(p).replace(/"/g, "'");
+  return `
+  <div class="product-card">
+    <div class="product-img-placeholder">${p.icon}</div>
+    <div class="product-body">
+      <span class="product-tag">${p.category}</span>
+      <div class="product-name">${p.name}</div>
+      <div class="product-desc">${p.desc}</div>
+      <div class="product-footer">
+        <div class="product-price">£${p.price.toFixed(2)}<small>/mo</small></div>
+        <button class="btn-add" id="add-${p.id}" onclick="cart.addItem(${itemJson})">Add</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+/*  SHOPPING CART CLASS
+   Manages cart state, localStorage persistence, and DOM rendering.
+
+   Key methods:
+     addItem(item)            — add product or increment quantity
+     removeItem(id)           — remove a product entirely
+     updateQuantity(id,delta) — increment (+1) or decrement (−1) quantity
+     calculateTotal()         — recalculates this.total from all items
+     renderCart()             — re-draws the cart DOM from this.items
+     clearCart()              — empties cart and saves
+
+   BUG FIX (from original Cart.js):
+     IDs are always coerced to strings before comparison.
+     Previously, numeric IDs (e.g. 1) vs string IDs ("1") would fail ===
+     comparison, causing duplicate entries instead of quantity increments. */
+class ShoppingCart {
+  constructor() {
+    this.items = [];   /* Array of { id, name, price, quantity, icon, ... } */
+    this.total = 0;    /* Running total in £ */
+    this.init();
+  }
+
+  init() {
+    this.loadCart();           /* Restore saved cart from localStorage */
+    this.renderCart();         /* Draw the initial cart state */
+    this.setupEventListeners();/* Attach buttons and delegation */
+  }
+
+  /*  Persistence 
+     Cart is saved to localStorage under 'xgym_cart' as a JSON string.
+     On load, all IDs are normalised to strings for consistent comparison. */
+  loadCart() {
+    try {
+      const saved = localStorage.getItem('xgym_cart');
+      if (saved) {
+        this.items = JSON.parse(saved);
+        /* Normalise IDs to strings (backward compatibility guard) */
+        this.items.forEach(i => { i.id = String(i.id); });
+        this.calculateTotal();
+      }
+    } catch (e) { this.items = []; /* Reset if JSON is corrupt */ }
+  }
+
+  saveCart() {
+    localStorage.setItem('xgym_cart', JSON.stringify(this.items));
+    this.updateBadge();
+  }
+
+  /*  addItem 
+     If item already in cart ,increment quantity.
+     If new item ; push with quantity: 1.
+     Always: recalculate, save, re-render, flash button, open cart. */
+  addItem(item) {
+    const id       = String(item.id); /*  use string for comparison */
+    const existing = this.items.find(i => i.id === id);
+
+    if (existing) {
+      existing.quantity += 1;          /* Increment existing item */
+    } else {
+      this.items.push({ ...item, id, quantity: 1 }); /* Add new item */
+    }
+
+    this.calculateTotal();
+    this.saveCart();
+    this.renderCart();
+    this.flashAddBtn(id);
+    this.showNotification(`${item.name} added ✓`);
+
+    /* Auto-open the cart panel when something is added */
+    const widget = document.querySelector('.cart-widget');
+    if (widget.classList.contains('cart-minimized')) toggleCart();
+  }
+
+  /*  removeItem 
+     Filters out the item with the given ID and re-renders. */
+  removeItem(itemId) {
+    const id   = String(itemId);
+    this.items = this.items.filter(i => i.id !== id);
+    this.calculateTotal();
+    this.saveCart();
+    this.renderCart();
+    this.showNotification('Item removed');
+  }
+
+  /*  updateQuantity 
+     delta = +1 (plus button) or −1 (minus button).
+     If quantity drops to 0, the item is fully removed. */
+  updateQuantity(itemId, delta) {
+    const id   = String(itemId);
+    const item = this.items.find(i => i.id === id);
+    if (!item) return;
+
+    item.quantity = Math.max(0, item.quantity + delta);
+    if (item.quantity === 0) {
+      this.removeItem(id);   /* Auto-remove when qty reaches zero */
+    } else {
+      this.calculateTotal();
+      this.saveCart();
+      this.renderCart();
+    }
+  }
+
+  /*  calculateTotal 
+     FIX: parseFloat + parseInt guards against string values from localStorage.
+     Without these, "£34.99" (string) × 3 = NaN instead of 104.97. */
+  calculateTotal() {
+    this.total = this.items.reduce((sum, item) => {
+      const price = parseFloat(item.price)    || 0;
+      const qty   = parseInt(item.quantity)   || 0;
+      return sum + (price * qty);
+    }, 0);
+  }
+
+  /*  clearCart 
+     Empties the cart entirely. Also called after successful checkout. */
+  clearCart() {
+    this.items = [];
+    this.calculateTotal();
+    this.saveCart();
+    this.renderCart();
+    this.showNotification('Cart cleared');
+  }
+
+  /*  renderCart 
+     Re-draws the entire cart DOM from this.items.
+     Called after every mutation (add/remove/quantity change). */
+  renderCart() {
+    const container = document.querySelector('.cart-items');
+    const totalEl   = document.getElementById('cartTotal');
+    const subEl     = document.getElementById('subtotalVal');
+    const countEl   = document.getElementById('cartCount');
+
+    /* Update item count label in cart header */
+    const itemCount = this.items.reduce((s, i) => s + i.quantity, 0);
+    countEl.textContent = itemCount === 1 ? '1 item' : `${itemCount} items`;
+
+    if (this.items.length === 0) {
+      /* Show empty state placeholder */
+      container.innerHTML = `
+        <div class="cart-empty">
+          <div class="cart-empty-icon">🛒</div>
+          <p style="font-weight:700;margin-bottom:4px">Nothing here yet</p>
+          <p style="font-size:12px">Add memberships or gear to get started</p>
+        </div>`;
+    } else {
+      /* Render each cart item row */
+      container.innerHTML = this.items.map(item => {
+        const lineTotal = (parseFloat(item.price) * item.quantity).toFixed(2);
+        return `
+        <div class="cart-item" data-id="${item.id}">
+          <div class="cart-item-img-placeholder">${item.icon || '📦'}</div>
+          <div class="cart-item-details">
+            <h4>${item.name}</h4>
+            <p>£${parseFloat(item.price).toFixed(2)} each</p>
+            <!-- Per-line subtotal: shows (price × qty) so user can verify total -->
+            <div class="cart-item-subtotal">Subtotal: £${lineTotal}</div>
+            <div class="cart-controls">
+              <button class="quantity-btn minus" data-id="${item.id}">−</button>
+              <span>${item.quantity}</span>
+              <button class="quantity-btn plus"  data-id="${item.id}">+</button>
+            </div>
+          </div>
+          <button class="remove-item" data-id="${item.id}" title="Remove">×</button>
+        </div>`;
+      }).join('');
+    }
+
+    /* Update total display elements */
+    const t = this.total.toFixed(2);
+    if (totalEl) totalEl.textContent = t;
+    if (subEl)   subEl.textContent   = `£${t}`;
+    this.updateBadge();
+  }
+
+  /*  updateBadge 
+     Updates the red counter bubble on the cart button.
+     "bump" class triggers a CSS scale animation. */
+  updateBadge() {
+    const badge = document.querySelector('.cart-badge');
+    if (!badge) return;
+    const count = this.items.reduce((s, i) => s + (parseInt(i.quantity) || 0), 0);
+    badge.textContent = count;
+    badge.classList.add('bump');
+    setTimeout(() => badge.classList.remove('bump'), 220);
+  }
+
+  /*  flashAddBtn 
+     Temporarily turns the "Add" button green with a ✓ to confirm the action. */
+  flashAddBtn(id) {
+    const btn = document.getElementById(`add-${id}`);
+    if (!btn) return;
+    btn.classList.add('added');
+    btn.textContent = '✓ Added';
+    setTimeout(() => { btn.classList.remove('added'); btn.textContent = 'Add'; }, 1500);
+  }
+
+  /*  showNotification
+     Creates a floating toast pill at the bottom of the screen.
+     Removes itself after the CSS animation completes (3s). */
+  showNotification(message) {
+    document.querySelectorAll('.cart-notification').forEach(n => n.remove()); /* remove stacked toasts */
+    const el = document.createElement('div');
+    el.className   = 'cart-notification';
+    el.textContent = message;
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 3100);
+  }
+
+  /* setupEventListeners
+     Uses event delegation on document for quantity/remove buttons —
+     these are dynamically rendered so we can't attach listeners directly.
+     Static buttons (close, clear, checkout) are attached directly. */
+  setupEventListeners() {
+    /* Close cart panel */
+    document.querySelector('.close-cart').addEventListener('click', toggleCart);
+
+    /* Clear all items */
+    document.querySelector('.clear-btn').addEventListener('click', () => this.clearCart());
+
+    /* Checkout — redirects to login page if not signed in */
+    document.querySelector('.checkout-btn').addEventListener('click', () => {
+      if (this.items.length === 0) return;
+
+      /* If no active session, send to login page.
+         */
+      if (!currentUser) {
+        window.location.href = '/login.html?redirect=shop';
+        return;
+      }
+      openCheckout();
+    });
+
+    /* Event delegation — handles dynamically rendered + and − and × buttons */
+    document.addEventListener('click', e => {
+      /* Quantity +/− buttons */
+      if (e.target.matches('.quantity-btn')) {
+        const id    = e.target.dataset.id;
+        const delta = e.target.classList.contains('plus') ? 1 : -1;
+        this.updateQuantity(id, delta);
+      }
+      /* Remove item × button */
+      if (e.target.matches('.remove-item')) {
+        this.removeItem(e.target.dataset.id);
+      }
+    });
+  }
+}
+
+/*  CART PANEL TOGGLE
+   Adds/removes .cart-minimized to slide the panel in and out.
+  */
+function toggleCart() {
+  const widget  = document.querySelector('.cart-widget');
+  const overlay = document.getElementById('cartOverlay');
+  const isNowOpen = widget.classList.toggle('cart-minimized');
+  /* overlay visible when cart is open (i.e. NOT minimized) */
+  overlay.classList.toggle('visible', !isNowOpen);
+}
+
+/*  CHECKOUT FLOW
+   renderCheckoutBody(state)  — renders either the payment form or success screen
+   setPayMethod(m)            — switches between 'card' and 'dd'
+   renderCardForm()           — card number / name / expiry / CVV inputs
+   renderDDForm()             — sort code / account number / DD authorisation
+   submitPayment()            — validates inputs, mocks API call, shows success
+   */
+let payMethod = 'card'; /* Tracks which payment method tab is active */
+
+function openCheckout() {
+  payMethod = 'card';
+  renderCheckoutBody('form');
+  openModal('checkoutModal');
+}
+
+/* Renders the checkout */
+function renderCheckoutBody(state, txnData) {
+  const body = document.getElementById('checkoutBody');
+  if (state === 'success') { body.innerHTML = renderCheckoutSuccess(txnData); return; }
+
+  /* Build order summary rows from current cart items */
+  const orderRows = cart.items.map(i =>
+    `<div class="order-item">
+      <span class="order-item-name">${i.icon} ${i.name} × ${i.quantity}</span>
+      <span class="order-item-price">£${(parseFloat(i.price) * i.quantity).toFixed(2)}</span>
+    </div>`
+  ).join('');
+
+  body.innerHTML = `
+    <!-- Payment method toggle -->
+    <div class="method-row">
+      <button class="method-btn ${payMethod==='card'?'active':''}" onclick="setPayMethod('card')">
+        <span class="method-btn-label">💳 Card payment</span>
+        <span class="method-btn-sub">Visa, Mastercard, Amex</span>
+      </button>
+      <button class="method-btn ${payMethod==='dd'?'active':''}" onclick="setPayMethod('dd')">
+        <span class="method-btn-label">🏦 Direct Debit</span>
+        <span class="method-btn-sub">Auto-pay monthly</span>
+      </button>
+    </div>
+
+    <!-- Payment form area (card or DD depending on active method) -->
+    <div id="payFormArea">
+      ${payMethod === 'card' ? renderCardForm() : renderDDForm()}
+    </div>
+
+    <!-- Order summary at the bottom of the form -->
+    <hr class="order-divider">
+    <div class="order-items">${orderRows}</div>
+    <div class="order-total"><span>Total due</span><span>£${cart.total.toFixed(2)}</span></div>
+    <br>
+
+    <!-- Pay button — label changes based on selected method -->
+    <button class="btn-primary" id="payBtn" onclick="submitPayment()">
+      ${payMethod === 'card'
+        ? `Pay £${cart.total.toFixed(2)}`
+        : `Set up Direct Debit — £${cart.total.toFixed(2)}/mo`}
+    </button>
+  `;
+}
+
+/* Switchthe payment method and re-renders the checkout form */
+function setPayMethod(m) {
+  payMethod = m;
+  renderCheckoutBody('form');
+}
+
+/*Card Payment Form */
+function renderCardForm() {
+  return `
+    <div class="form-field">
+      <label class="form-label">Card number</label>
+      <input class="form-input" id="cardNum" placeholder="1234 5678 9012 3456" maxlength="19"
+        oninput="this.value=this.value.replace(/\\D/g,'').slice(0,16).replace(/(.{4})/g,'$1 ').trim()">
+      <div class="form-error" id="cardNumErr"></div>
+    </div>
+    <div class="form-field">
+      <label class="form-label">Name on card</label>
+      <input class="form-input" id="cardName" placeholder="ALEX JOHNSON"
+        oninput="this.value=this.value.toUpperCase()">
+      <div class="form-error" id="cardNameErr"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-field">
+        <label class="form-label">Expiry date</label>
+        <input class="form-input" id="cardExp" placeholder="MM/YY" maxlength="5"
+          oninput="formatExpiry(this)">
+        <div class="form-error" id="cardExpErr"></div>
+      </div>
+      <div class="form-field">
+        <label class="form-label">CVV</label>
+        <input class="form-input" id="cardCvv" type="password" placeholder="•••" maxlength="4"
+          oninput="this.value=this.value.replace(/\\D/g,'')">
+        <div class="form-error" id="cardCvvErr"></div>
+      </div>
+    </div>
+    <label class="form-check">
+      <input type="checkbox" id="saveCard" checked>
+      Save card for future payments
+    </label>
+  `;
+}
+
+/*  Direct Debit Form 
+   UK-specific: sort code auto-formats to XX-XX-XX as the user types.
+   Requires the user to tick the Direct Debit authorisation checkbox. */
+function renderDDForm() {
+  return `
+    <div class="dd-info">
+      <strong style="color:var(--text)">Direct Debit Guarantee</strong><br>
+      Payments will be collected on the 1st of each month. You'll be notified
+      10 working days before any changes to the amount or date.
+    </div>
+    <div class="form-field">
+      <label class="form-label">Account holder name</label>
+      <input class="form-input" id="ddName" placeholder="Alex Johnson">
+      <div class="form-error" id="ddNameErr"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-field">
+        <label class="form-label">Sort code</label>
+        <!-- Auto-formats to XX-XX-XX pattern as the user types -->
+        <input class="form-input" id="ddSort" placeholder="00-00-00" maxlength="8"
+          oninput="this.value=this.value.replace(/\\D/g,'').slice(0,6).replace(/(\\d{2})(?=\\d)/g,'$1-')">
+        <div class="form-error" id="ddSortErr"></div>
+      </div>
+      <div class="form-field">
+        <label class="form-label">Account number</label>
+        <input class="form-input" id="ddAcNum" placeholder="12345678" maxlength="8"
+          oninput="this.value=this.value.replace(/\\D/g,'')">
+        <div class="form-error" id="ddAcNumErr"></div>
+      </div>
+    </div>
+    <!-- Mandatory authorisation checkbox — must be ticked to proceed -->
+    <label class="form-check">
+      <input type="checkbox" id="ddAuth">
+      I authorise XGYM to collect £${cart.total.toFixed(2)}/month from this account
+      under the Direct Debit Guarantee.
+    </label>
+    <div class="form-error" id="ddAuthErr"></div>
+  `;
+}
+
+/*  Success / Receipt Screen
+   Show after a successful payment. Displays a receipt-style summary. */
+function renderCheckoutSuccess(txn) {
+  const isDD = txn.method === 'Direct Debit';
+  return `
+    <div class="checkout-success">
+      <div class="success-icon">✅</div>
+      <div class="success-title">Payment confirmed!</div>
+      <div class="success-sub">
+        ${isDD
+          ? 'Your Direct Debit is set up. First payment on 1 May 2025.'
+          : `Your card was charged £${parseFloat(txn.amount).toFixed(2)} successfully.`}
+      </div>
+      <div class="receipt-box">
+        <div class="receipt-row"><span>Order ID</span><span>${txn.id}</span></div>
+        <div class="receipt-row"><span>Date</span><span>${new Date().toLocaleDateString('en-GB',{day:'numeric',month:'long',year:'numeric'})}</span></div>
+        <div class="receipt-row"><span>Method</span><span>${txn.method}</span></div>
+        <div class="receipt-row"><span>Amount</span><span>£${parseFloat(txn.amount).toFixed(2)}</span></div>
+        <div class="receipt-row"><span>Status</span><span style="color:var(--success);font-weight:700">Paid ✓</span></div>
+      </div>
+      <button class="btn-primary" onclick="closeModal('checkoutModal')">Done</button>
+    </div>
+  `;
+}
+
+/*  Expiry Date Formatter
+   Called oninput on the expiry field. Inserts "/" after the 2nd digit. */
+function formatExpiry(el) {
+  let v = el.value.replace(/\D/g, '').slice(0, 4);
+  el.value = v.length > 2 ? v.slice(0,2) + '/' + v.slice(2) : v;
+}
+
+/* Luhn Algorithm
+   Validates that a card number is mathematically plausible (not just 16 digits) */
+function luhn(num) {
+  const digits = num.replace(/\D/g,'').split('').reverse().map(Number);
+  return digits.reduce((sum, d, i) => {
+    if (i % 2 === 1) { d *= 2; if (d > 9) d -= 9; }
+    return sum + d;
+  }, 0) % 10 === 0;
+}
+
+/* Detects card brand from the first 1–2 digits of the card number */
+function cardBrand(n) {
+  const d = n.replace(/\s/g,'');
+  if (/^4/.test(d))      return 'Visa';
+  if (/^5[1-5]/.test(d)) return 'Mastercard';
+  if (/^3[47]/.test(d))  return 'Amex';
+  return 'Card';
+}
+
+/*  submitPayment 
+   Validates the active payment form, then simulates a payment API call.
+   In production: replace the setTimeout with a real fetch() to Stripe or GoCardless.
+
+   setErr(id, msg) — helper that:
+     1. Shows msg in the .form-error div with the given id
+     2. Adds/removes .error class on the corresponding input
+     3. Sets valid = false if msg is non-empty
+    */
+function submitPayment() {
+  let valid = true;
+
+  const setErr = (errId, msg) => {
+    const errEl = document.getElementById(errId);
+    if (errEl) { errEl.textContent = msg; if (msg) valid = false; }
+    /* Toggle red border on the input (id without 'Err' suffix) */
+    const inputEl = document.getElementById(errId.replace('Err',''));
+    if (inputEl) inputEl.classList.toggle('error', !!msg);
+  };
+
+  if (payMethod === 'card') {
+    /* Read card field values */
+    const num  = (document.getElementById('cardNum')?.value  || '').replace(/\s/g,'');
+    const name = (document.getElementById('cardName')?.value || '').trim();
+    const exp  = (document.getElementById('cardExp')?.value  || '');
+    const cvv  = (document.getElementById('cardCvv')?.value  || '');
+
+    /* Validate each field */
+    setErr('cardNumErr',  num.length !== 16 || !luhn(num) ? 'Enter a valid 16-digit card number' : '');
+    setErr('cardNameErr', !name ? 'Enter the cardholder name' : '');
+    setErr('cardExpErr',  !/^\d{2}\/\d{2}$/.test(exp) ? 'Use MM/YY format (e.g. 08/27)' : '');
+    setErr('cardCvvErr',  !/^\d{3,4}$/.test(cvv) ? 'Enter your 3 or 4 digit CVV' : '');
+    if (!valid) return;
+
+    /* Mock payment API — replace with real Stripe API call */
+    const btn = document.getElementById('payBtn');
+    btn.disabled = true; btn.textContent = 'Processing…';
+    setTimeout(() => {
+      const txn = {
+        id:     'ORD-' + Math.floor(Math.random() * 9000 + 1000),
+        amount: cart.total,
+        method: `${cardBrand(num)} •••• ${num.slice(-4)}`
+      };
+      /* Save to history then clear cart */
+      ORDER_HISTORY.unshift({
+        ...txn, date: new Date().toISOString().split('T')[0],
+        status: 'paid',
+        items:  cart.items.map(i => `${i.name} × ${i.quantity}`).join(', ')
+      });
+      cart.clearCart();
+      renderCheckoutBody('success', txn);
+    }, 1600);
+
+  } else {
+    /* Direct Debit validation */
+    const name  = (document.getElementById('ddName')?.value  || '').trim();
+    const sort  = (document.getElementById('ddSort')?.value  || '');
+    const acnum = (document.getElementById('ddAcNum')?.value || '');
+    const auth  = document.getElementById('ddAuth')?.checked;
+
+    setErr('ddNameErr', !name ? 'Enter the account holder name' : '');
+    setErr('ddSortErr', !/^\d{2}-\d{2}-\d{2}$/.test(sort) ? 'Use XX-XX-XX format (e.g. 04-00-75)' : '');
+    setErr('ddAcNumErr', !/^\d{8}$/.test(acnum) ? 'Enter your 8-digit account number' : '');
+    setErr('ddAuthErr', !auth ? 'You must authorise the Direct Debit to continue' : '');
+    if (!valid) return;
+
+    /* Mock DD setup — replace with GoCardless / Stripe BACS API call */
+    const btn = document.getElementById('payBtn');
+    btn.disabled = true; btn.textContent = 'Setting up…';
+    setTimeout(() => {
+      const txn = {
+        id:     'DD-' + Math.floor(Math.random() * 9000 + 1000),
+        amount: cart.total,
+        method: 'Direct Debit'
+      };
+      ORDER_HISTORY.unshift({
+        ...txn, date: new Date().toISOString().split('T')[0],
+        status: 'paid',
+        items:  cart.items.map(i => `${i.name} × ${i.quantity}`).join(', ')
+      });
+      cart.clearCart();
+      renderCheckoutBody('success', txn);
+    }, 1600);
+  }
+}
+
+/* . ORDER HISTORY MODAL
+   Calculates summary stats and renders the full order list.
+   In production: replace ORDER_HISTORY with a fetch() from the orders API.
+   */
+function openHistory() {
+  const totalPaid = ORDER_HISTORY
+    .filter(o => o.status === 'paid')
+    .reduce((s, o) => s + parseFloat(o.amount), 0);
+  const failedCount = ORDER_HISTORY.filter(o => o.status === 'failed').length;
+
+  document.getElementById('historyBody').innerHTML = `
+    <!-- Summary stats row -->
+    <div class="history-stats">
+      <div class="hstat">
+        <div class="hstat-label">Total spent</div>
+        <div class="hstat-val">£${totalPaid.toFixed(2)}</div>
+      </div>
+      <div class="hstat">
+        <div class="hstat-label">Orders</div>
+        <div class="hstat-val">${ORDER_HISTORY.filter(o => o.status === 'paid').length}</div>
+      </div>
+      <div class="hstat">
+        <div class="hstat-label">Failed</div>
+        <div class="hstat-val" style="color:var(--danger)">${failedCount}</div>
+      </div>
+    </div>
+
+    <!-- Order list -->
+    <div class="history-list">
+      ${ORDER_HISTORY.map(o => `
+        <div class="history-item">
+          <div class="h-left">
+            <div class="h-desc">${o.items}</div>
+            <div class="h-meta">
+              ${new Date(o.date).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})}
+              &nbsp;·&nbsp; ${o.method}
+            </div>
+          </div>
+          <div class="h-right">
+            <div class="h-amount">£${parseFloat(o.amount).toFixed(2)}</div>
+            <span class="badge badge-${o.status}">${o.status}</span>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+  openModal('historyModal');
+}
+
+/*  MODAL HELPERS
+   openModal(id)  — adds .open class to show the backdrop
+   closeModal(id) — removes .open class to hide it
+   Two extras: click-outside-to-close and Escape key to close all open modals. */
+function openModal(id)  { document.getElementById(id).classList.add('open'); }
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+
+/* Close modal when clicking the dark backdrop (not the modal box itself) */
+document.querySelectorAll('.modal-backdrop').forEach(bd => {
+  bd.addEventListener('click', e => { if (e.target === bd) bd.classList.remove('open'); });
+});
+
+/* Close all open modals on Escape key */
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    document.querySelectorAll('.modal-backdrop.open').forEach(m => m.classList.remove('open'));
+  }
+});
+
+/* INITIALISE
+   Render products into the DOM, then create the ShoppingCart instance.
+   cart is global so checkout functions can call cart.items, cart.total, etc.
+  */
+renderProducts();
+const cart = new ShoppingCart();
+
+</script>
+</body>
+</html>
