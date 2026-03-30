@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>X-Gym</title>
+  <link rel="stylesheet" href="styles.css" />
+  <style>
+    /* Portal / auth section layout */
+    .portal { padding: 1rem 3rem 3rem; }
+
+    .auth-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 1.5rem;
+      margin-top: 1rem;
+    }
+
+    .card { padding: 1.5rem 1.75rem; }
+    .card h2 { margin-top: 0; }
+
+    label {
+      display: block;
+      font-size: 0.85rem;
+      margin-top: 0.75rem;
+      margin-bottom: 0.15rem;
+    }
+
+    input, select {
+      width: 100%;
+      padding: 0.55rem 0.7rem;
+      border-radius: 0.75rem;
+      border: 1px solid rgba(255,255,255,0.2);
+      background: rgba(0,0,0,0.4);
+      color: #fff;
+      outline: none;
+      font-size: 0.9rem;
+      margin-top: 0.25rem;
+    }
+
+    /* App layout (post-login) */
+    .app-layout {
+      margin-top: 2rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+
+    .app-nav {
+      padding: 0.9rem 1.4rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .role-badge {
+      display: inline-block;
+      margin-left: 0.75rem;
+      padding: 0.15rem 0.6rem;
+      border-radius: 999px;
+      font-size: 0.7rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      background: rgba(255, 42, 63, 0.15);
+      border: 1px solid rgba(255, 42, 63, 0.4);
+      color: #ff2a3f;
+    }
+
+    .app-panels {
+      display: grid;
+      grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+      gap: 1.5rem;
+    }
+
+    .panel { padding: 1.5rem 1.75rem; }
+
+    .sub-panel { margin-bottom: 1.25rem; }
+    .sub-panel h3 { margin-top: 0; margin-bottom: 0.5rem; }
+
+    .scroll-area {
+      max-height: 220px;
+      overflow-y: auto;
+      padding-right: 0.5rem;
+    }
+
+    .class-card {
+      border-radius: 0.9rem;
+      border: 1px solid rgba(255,255,255,0.15);
+      padding: 0.7rem 0.8rem;
+      margin-bottom: 0.5rem;
+      background: rgba(0,0,0,0.5);
+      font-size: 0.85rem;
+    }
+
+    .class-card strong { display: block; margin-bottom: 0.15rem; }
+    .class-meta { color: #bbb; font-size: 0.8rem; }
+
+    .btn-3d.small { padding: 0.45rem 1.1rem; font-size: 0.8rem; }
+
+    @media (max-width: 900px) {
+      .app-panels { grid-template-columns: 1fr; }
+      .portal { padding-inline: 1.5rem; }
+      .site-header { padding-inline: 1.5rem; }
+    }
+
+    @media (max-width: 600px) {
+      .hero-actions { flex-direction: column; }
+      .hero-content { padding: 2rem; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- HEADER -->
+  <header class="site-header">
+    <div class="logo">X<span>-</span>Gym</div>
+    <nav class="nav-links">
+      <a href="#portal">Portal</a>
+    </nav>
+  </header>
+
+  <!-- HERO -->
+  <section class="hero">
+    <div class="hero-content glass-3d">
+      <h1>X&#8209;Gym</h1>
+      <p>Strength. Discipline. Power. Your transformation starts here.</p>
+      <div class="hero-actions">
+        <button id="heroLoginBtn" class="btn-3d">Login</button>
+        <button id="heroRegisterBtn" class="btn-3d secondary">Register</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- PORTAL -->
+  <section class="portal" id="portal">
+
+    <!-- AUTH SECTION (shown when logged out) -->
+    <div id="authSection">
+      <h2 style="margin-bottom:1rem;">Member Portal</h2>
+      <div class="auth-grid">
+
+        <!-- Login card -->
+        <div class="card glass-3d">
+          <h2>Login</h2>
+          <label for="loginEmail">Email</label>
+          <input id="loginEmail" type="email" placeholder="you@example.com" />
+          <label for="loginPassword">Password</label>
+          <input id="loginPassword" type="password" placeholder="Password" />
+          <br /><br />
+          <button id="loginBtn" class="btn-3d" style="width:100%;">Login</button>
+        </div>
+
+        <!-- Register card -->
+        <div class="card glass-3d">
+          <h2>Register</h2>
+          <label for="regName">Full Name</label>
+          <input id="regName" type="text" placeholder="Your name" />
+          <label for="regEmail">Email</label>
+          <input id="regEmail" type="email" placeholder="you@example.com" />
+          <label for="regPassword">Password</label>
+          <input id="regPassword" type="password" placeholder="Choose a password" />
+          <label for="regRole">Role</label>
+          <select id="regRole">
+            <option value="client">Client</option>
+            <option value="trainer">Trainer</option>
+          </select>
+          <br /><br />
+          <button id="registerBtn" class="btn-3d" style="width:100%;">Register</button>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- APP SECTION (shown when logged in) -->
+    <div id="app" class="hidden">
+      <div class="app-layout">
+
+        <!-- Navigation bar -->
+        <nav id="nav" class="glass-3d app-nav hidden">
+          <div>
+            <span id="welcome"></span>
+            <span id="roleBadge" class="role-badge"></span>
+          </div>
+          <button id="logoutBtn" class="btn-3d secondary">Logout</button>
+        </nav>
+
+        <div class="app-panels">
+
+          <!-- TRAINER PANEL (visible to trainers only) -->
+          <div id="trainerPanel" class="panel glass-3d hidden">
+
+            <!-- Add class -->
+            <div class="sub-panel">
+              <h3>Add Class</h3>
+              <label for="className">Class Name</label>
+              <input id="className" type="text" placeholder="e.g. Yoga" />
+              <label for="classDay">Day</label>
+              <input id="classDay" type="text" placeholder="e.g. Monday" />
+              <label for="classTime">Time</label>
+              <input id="classTime" type="text" placeholder="e.g. 09:00" />
+              <br /><br />
+              <button id="addClassBtn" class="btn-3d">Add Class</button>
+            </div>
+
+            <!-- Assign trainer -->
+            <div class="sub-panel">
+              <h3>Assign Trainer to Class</h3>
+              <label for="assignClassSelect">Class</label>
+              <select id="assignClassSelect"></select>
+              <label for="assignTrainerSelect">Trainer</label>
+              <select id="assignTrainerSelect"></select>
+              <label for="assignHours">Hours</label>
+              <input id="assignHours" type="number" min="1" placeholder="e.g. 2" />
+              <br /><br />
+              <button id="assignTrainerBtn" class="btn-3d">Assign</button>
+            </div>
+
+            <!-- Class list -->
+            <div class="sub-panel">
+              <h3>All Classes</h3>
+              <div id="classList" class="scroll-area"></div>
+            </div>
+
+            <!-- Trainer hours summary -->
+            <div class="sub-panel">
+              <h3>Trainer Hours Summary</h3>
+              <div id="trainerHoursSummary" class="scroll-area"></div>
+            </div>
+
+          </div>
+
+          <!-- CLIENT PANEL (visible to all logged-in users) -->
+          <div id="clientPanel" class="panel glass-3d hidden">
+
+            <div class="sub-panel">
+              <h3>Available Classes</h3>
+              <div id="clientClassList" class="scroll-area"></div>
+            </div>
+
+            <div class="sub-panel">
+              <h3>My Enrollments</h3>
+              <div id="clientEnrollments" class="scroll-area"></div>
+            </div>
+
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+  </section>
+
+  <script src="app.js"></script>
+</body>
+</html>
