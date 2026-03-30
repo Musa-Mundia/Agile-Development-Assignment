@@ -7,16 +7,27 @@
 // ============================================================
 // SECTION 1: FIREBASE CONFIGURATION
 // ============================================================
-/// Create a Firebase Type Webapp and paste your configuration , warning dont use message ID
+// NOTE: The login/role system will NOT work until these values are filled in.
+// To set up Firebase:
+//   1. Go to https://console.firebase.google.com/ and create a project.
+//   2. Enable Authentication (Email/Password) and Realtime Database.
+//   3. In Project Settings > General > Your apps, add a Web app and copy
+//      the config object values into the fields below.
+//   4. In Realtime Database rules, scope rules to specific paths and roles
+//      (e.g. users can only read/write their own profile). Avoid blanket
+//      "allow all authenticated" rules — follow the principle of least privilege.
+//
+// IMPORTANT: Never commit real credentials to version control.
+// Use environment variables or a backend proxy for production deployments.
 const firebaseConfig = {
-  apiKey: "",
-  authDomain: "",
-  databaseURL: "",
-  projectId: "",
-  storageBucket: "",
-  messagingSenderId: "",
-  appId: "",
-  measurementId: ""
+  apiKey: "",        // e.g. "AIzaSy..."
+  authDomain: "",    // e.g. "your-project.firebaseapp.com"
+  databaseURL: "",   // e.g. "https://your-project-default-rtdb.firebaseio.com"
+  projectId: "",     // e.g. "your-project"
+  storageBucket: "", // e.g. "your-project.appspot.com"
+  messagingSenderId: "", // e.g. "123456789"
+  appId: "",         // e.g. "1:123456789:web:abc123"
+  measurementId: ""  // e.g. "G-XXXXXXXX" (optional)
 };
 
 firebase.initializeApp(firebaseConfig);
