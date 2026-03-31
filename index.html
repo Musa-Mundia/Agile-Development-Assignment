@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>X-Gym</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+  <!-- ── HEADER ───────────────────────────────────────────── -->
+  <header class="site-header">
+    <div class="logo">X<span>-</span>Gym</div>
+    <nav class="nav-links">
+      <a href="#portal">Login / Register</a>
+    </nav>
+  </header>
+
+  <!-- ── HERO ─────────────────────────────────────────────── -->
+  <section class="hero" id="hero">
+    <div class="hero-overlay"></div>
+    <div class="hero-content glass-3d">
+      <h1>X&nbsp;Gym</h1>
+      <p>Strength. Discipline. Power. Your transformation starts here.</p>
+      <div class="hero-actions">
+        <button class="btn-3d" id="heroLoginBtn">Login</button>
+        <button class="btn-3d secondary" id="heroRegisterBtn">Register</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── AUTH PORTAL (Login / Register) ───────────────────── -->
+  <section class="portal" id="authSection">
+    <div class="auth-grid">
+
+      <!-- Login card -->
+      <div class="card glass-3d">
+        <h2>Login</h2>
+        <label for="loginEmail">Email</label>
+        <input type="email" id="loginEmail" placeholder="you@example.com" />
+
+        <label for="loginPassword">Password</label>
+        <input type="password" id="loginPassword" placeholder="Password" />
+
+        <br /><br />
+        <button class="btn-3d" id="loginBtn">Login</button>
+      </div>
+
+      <!-- Register card -->
+      <div class="card glass-3d">
+        <h2>Register</h2>
+        <label for="regName">Full Name</label>
+        <input type="text" id="regName" placeholder="Jane Doe" />
+
+        <label for="regEmail">Email</label>
+        <input type="email" id="regEmail" placeholder="you@example.com" />
+
+        <label for="regPassword">Password</label>
+        <input type="password" id="regPassword" placeholder="Password" />
+
+        <label for="regRole">Role</label>
+        <select id="regRole">
+          <option value="client">Client</option>
+          <option value="trainer">Trainer</option>
+        </select>
+
+        <br /><br />
+        <button class="btn-3d" id="registerBtn">Register</button>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ── APP (shown after login) ──────────────────────────── -->
+  <div id="app" class="hidden">
+
+    <!-- App nav bar -->
+    <nav id="nav" class="app-nav glass-3d hidden">
+      <span>
+        <strong id="welcome"></strong>
+        <span class="role-badge" id="roleBadge"></span>
+      </span>
+      <button class="btn-3d secondary" id="logoutBtn">Logout</button>
+    </nav>
+
+    <div class="app-layout app-panels">
+
+      <!-- ── TRAINER PANEL ────────────────────────────────── -->
+      <div id="trainerPanel" class="panel glass-3d hidden">
+
+        <div class="sub-panel">
+          <h3>Add Class</h3>
+          <label for="className">Class Name</label>
+          <input type="text" id="className" placeholder="e.g. Morning Yoga" />
+
+          <label for="classDay">Day</label>
+          <input type="text" id="classDay" placeholder="e.g. Monday" />
+
+          <label for="classTime">Time</label>
+          <input type="text" id="classTime" placeholder="e.g. 07:00" />
+
+          <br /><br />
+          <button class="btn-3d" id="addClassBtn">Add Class</button>
+        </div>
+
+        <div class="sub-panel">
+          <h3>Assign Trainer to Class</h3>
+          <label for="assignClassSelect">Class</label>
+          <select id="assignClassSelect"></select>
+
+          <label for="assignTrainerSelect">Trainer</label>
+          <select id="assignTrainerSelect"></select>
+
+          <label for="assignHours">Hours</label>
+          <input type="number" id="assignHours" placeholder="e.g. 2" min="0" />
+
+          <br /><br />
+          <button class="btn-3d" id="assignTrainerBtn">Assign</button>
+        </div>
+
+        <div class="sub-panel">
+          <h3>All Classes</h3>
+          <div class="scroll-area" id="classList"></div>
+        </div>
+
+        <div class="sub-panel">
+          <h3>Trainer Hours Summary</h3>
+          <div class="scroll-area" id="trainerHoursSummary"></div>
+        </div>
+
+      </div><!-- /trainerPanel -->
+
+      <!-- ── CLIENT PANEL ─────────────────────────────────── -->
+      <div id="clientPanel" class="panel glass-3d hidden">
+
+        <div class="sub-panel">
+          <h3>Available Classes</h3>
+          <div class="scroll-area" id="clientClassList"></div>
+        </div>
+
+        <div class="sub-panel">
+          <h3>My Enrollments</h3>
+          <div class="scroll-area" id="clientEnrollments"></div>
+        </div>
+
+      </div><!-- /clientPanel -->
+
+    </div><!-- /app-layout -->
+  </div><!-- /app -->
+
+  <script src="app.js"></script>
+</body>
+</html>
