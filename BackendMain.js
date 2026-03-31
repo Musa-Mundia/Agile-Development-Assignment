@@ -276,7 +276,7 @@ async function loginUser(email, password) {
  */
 async function logoutUser() {
   await auth.signOut();
-  window.location.href = "XgymIndex.xxxx.html";
+  window.location.href = "index.html";
 }
 
 /**
@@ -863,7 +863,7 @@ async function getAdminStats() {
  */
 function detectPage() {
   const path = window.location.pathname.toLowerCase();
-  if (path.includes("xgymindex"))        return "index";
+  if (path.includes("xgymindex") || path.endsWith("index.html") || path === "/" || path === "") return "index";
   if (path.includes("dashboardclient"))  return "client";
   if (path.includes("trainerdashboard")) return "trainer";
   if (path.includes("admindashboard"))   return "admin";
@@ -1102,7 +1102,7 @@ function _initAuthForms() {
 async function initClientPage() {
   const user = await waitForAuth();
   if (!user) {
-    window.location.href = "XgymIndex.xxxx.html";
+    window.location.href = "index.html";
     return;
   }
 
@@ -1119,7 +1119,7 @@ async function initClientPage() {
 
   if (!profile || profile.role !== "client") {
     console.warn("[X-Gym] Client page: invalid profile or role", profile);
-    window.location.href = "XgymIndex.xxxx.html";
+    window.location.href = "index.html";
     return;
   }
 
@@ -1483,7 +1483,7 @@ function _loadCartPanel() {
 async function initTrainerPage() {
   const user = await waitForAuth();
   if (!user) {
-    window.location.href = "XgymIndex.xxxx.html";
+    window.location.href = "index.html";
     return;
   }
 
@@ -1500,7 +1500,7 @@ async function initTrainerPage() {
 
   if (!profile || profile.role !== "trainer") {
     console.warn("[X-Gym] Trainer page: invalid profile or role", profile);
-    window.location.href = "XgymIndex.xxxx.html";
+    window.location.href = "index.html";
     return;
   }
 
@@ -1882,7 +1882,7 @@ async function initAdminPage() {
 
   if (!user) {
     console.warn("[X-Gym] initAdminPage: no user, redirecting to index");
-    window.location.href = "XgymIndex.xxxx.html";
+    window.location.href = "index.html";
     return;
   }
 
@@ -1901,7 +1901,7 @@ async function initAdminPage() {
   if (!profile || profile.role !== "admin") {
     console.warn("[X-Gym] Admin page: invalid profile or role", profile);
     showToast("Access denied. Admin only. Profile role: " + (profile ? profile.role : "null"), "error");
-    setTimeout(function() { window.location.href = "XgymIndex.xxxx.html"; }, 2000);
+    setTimeout(function() { window.location.href = "index.html"; }, 2000);
     return;
   }
 
