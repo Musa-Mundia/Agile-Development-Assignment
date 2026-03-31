@@ -409,19 +409,20 @@ select:focus {
 }
 */
 :root {
-  --bg1: #0a0a0a;
-  --bg2: #1a0000;
-  --bg3: #330000;
+  --bg1: #000d14;
+  --bg2: #001220;
+  --bg3: #001a2e;
 
-  --red: #ff2a3f;
-  --red-soft: rgba(255, 42, 63, 0.35);
-  --red-glow: 0 0 25px rgba(255, 42, 63, 0.6);
+  --aura: #08a5e2;
+  --aura2: #006af5;
+  --aura-soft: rgba(8, 165, 226, 0.35);
+  --aura-glow: 0 0 25px rgba(8, 165, 226, 0.6);
 
-  --white: #ffffff;
-  --white-soft: #cccccc;
+  --white: #f1f9fe;
+  --white-soft: #b0c4de;
 
-  --text-main: #ffffff;
-  --text-muted: #bbbbbb;
+  --text-main: #f1f9fe;
+  --text-muted: #8aa8c0;
 
   --shadow-soft: 0 20px 60px rgba(0,0,0,0.35);
   --shadow-strong: 0 40px 120px rgba(0,0,0,0.55);
@@ -436,11 +437,10 @@ select:focus {
 
 body {
   margin: 0;
-  font-family: "Inter", system-ui, sans-serif;
+  font-family: 'Exo 2', system-ui, sans-serif;
   color: var(--text-main);
-  background: url('https://via.placeholder.com/1920x1080/000000/ff2a3f?text=Background+Image') center/cover no-repeat, linear-gradient(135deg, var(--bg1), var(--bg2), var(--bg3));
- /* background: linear-gradient(135deg, var(--bg1), var(--bg2), var(--bg3));
-  background-size: 250% 250%;*/
+  background: linear-gradient(135deg, var(--bg1), var(--bg2), var(--bg3));
+  background-size: 250% 250%;
   animation: bgShift 14s ease-in-out infinite;
   overflow-x: hidden;
   position: relative;
@@ -457,8 +457,8 @@ body::before {
   position: fixed;
   inset: 0;
   background:
-    radial-gradient(circle at 30% 20%, rgba(255, 42, 63, 0.25), transparent 60%),
-    radial-gradient(circle at 80% 70%, rgba(255, 42, 63, 0.15), transparent 60%);
+    radial-gradient(circle at 30% 20%, rgba(8, 165, 226, 0.25), transparent 60%),
+    radial-gradient(circle at 80% 70%, rgba(0, 106, 245, 0.15), transparent 60%);
   mix-blend-mode: screen;
   z-index: -2;
 }
@@ -490,7 +490,7 @@ body::after {
   justify-content: space-between;
   align-items: center;
   background: rgba(0,0,0,0.6);
-  border-bottom: 1px solid var(--red-soft);
+  border-bottom: 1px solid var(--aura-soft);
   backdrop-filter: blur(6px);
   z-index: 10;
 }
@@ -503,8 +503,8 @@ body::after {
 }
 
 .logo span {
-  color: var(--red);
-  text-shadow: var(--red-glow);
+  color: var(--aura);
+  text-shadow: var(--aura-glow);
 }
 
 .nav-links a {
@@ -524,7 +524,7 @@ body::after {
   bottom: -0.3rem;
   width: 0;
   height: 2px;
-  background: var(--red);
+  background: var(--aura);
   transition: width 0.25s ease;
 }
 
@@ -550,8 +550,8 @@ body::after {
   position: absolute;
   inset: 0;
   background:
-    radial-gradient(circle at 60% 20%, rgba(255, 42, 63, 0.25), transparent 60%),
-    radial-gradient(circle at 20% 80%, rgba(255, 42, 63, 0.2), transparent 60%);
+    radial-gradient(circle at 60% 20%, rgba(8, 165, 226, 0.25), transparent 60%),
+    radial-gradient(circle at 20% 80%, rgba(0, 106, 245, 0.2), transparent 60%);
   mix-blend-mode: screen;
   z-index: -1;
 }
@@ -572,7 +572,7 @@ body::after {
   text-transform: uppercase;
   margin-bottom: 0.8rem;
   color: var(--white);
-  text-shadow: var(--red-glow);
+  text-shadow: var(--aura-glow);
 }
 
 .hero-content p {
@@ -610,7 +610,7 @@ body::after {
 
 .glass-3d:hover {
   transform: perspective(1200px) rotateX(0deg) translateY(-6px) translateZ(10px);
-  box-shadow: var(--red-glow), var(--shadow-strong);
+  box-shadow: var(--aura-glow), var(--shadow-strong);
 }
 
 /* BUTTONS */
@@ -618,20 +618,20 @@ body::after {
   border: none;
   padding: 0.85rem 2rem;
   border-radius: 999px;
-  background: var(--red);
+  background: linear-gradient(135deg, var(--aura2), var(--aura));
   color: #ffffff;
   font-weight: 700;
   font-size: 0.9rem;
   letter-spacing: 0.16em;
   text-transform: uppercase;
   cursor: pointer;
-  box-shadow: var(--red-glow);
+  box-shadow: var(--aura-glow);
   transition: transform 0.18s ease-out, box-shadow 0.18s ease-out;
 }
 
 .btn-3d:hover {
   transform: translateY(-3px);
-  box-shadow: 0 0 40px rgba(255, 42, 63, 0.9);
+  box-shadow: 0 0 40px rgba(8, 165, 226, 0.9);
 }
 
 .btn-3d:active {
@@ -643,6 +643,7 @@ body::after {
   color: var(--white);
   box-shadow: 0 0 20px rgba(255,255,255,0.3);
 }
+
 
 /* FORMS */
 label {
@@ -658,8 +659,8 @@ select {
 
 input:focus,
 select:focus {
-  border-color: var(--red);
-  box-shadow: var(--red-glow);
+  border-color: var(--aura);
+  box-shadow: var(--aura-glow);
 }
 
 /* CLASS CARDS */

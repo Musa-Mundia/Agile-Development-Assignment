@@ -1,5 +1,5 @@
 // ============================================================
-// BackendMain.js — All-in-one backend for X-Gym
+// BackendMain.js â€” All-in-one backend for X-Gym
 // Handles: Firebase Auth, Realtime Database, Role Routing, Cart,
 //          Client Features, Trainer Features, UI Utilities
 // ============================================================
@@ -73,8 +73,8 @@ function showToast(message, type = "info") {
 
   const colors = {
     success: "rgba(0,200,80,0.9)",
-    error:   "rgba(220,30,30,0.9)",
-    info:    "rgba(255,80,0,0.85)"
+    error:   "rgba(8,165,226,0.9)",
+    info:    "rgba(0,106,245,0.85)"
   };
 
   const toast = document.createElement("div");
@@ -84,7 +84,7 @@ function showToast(message, type = "info") {
     color: #fff;
     padding: 14px 22px;
     border-radius: 10px;
-    font-family: 'Poppins', sans-serif;
+    font-family: 'Exo 2', sans-serif;
     font-size: 0.95rem;
     box-shadow: 0 4px 20px rgba(0,0,0,0.4);
     backdrop-filter: blur(8px);
@@ -140,13 +140,13 @@ function showModal(title, contentHTML, onConfirm = null) {
     max-width: 500px;
     width: 90%;
     color: #fff;
-    font-family: 'Poppins', sans-serif;
+    font-family: 'Exo 2', sans-serif;
     box-shadow: 0 0 40px rgba(255,0,60,0.3);
   `;
 
   const titleEl = document.createElement("h2");
   titleEl.textContent = title;
-  titleEl.style.cssText = "margin: 0 0 18px; font-size: 1.5rem; color: #ff4d4d;";
+  titleEl.style.cssText = "margin: 0 0 18px; font-size: 1.5rem; color: #08a5e2;";
 
   const body = document.createElement("div");
   body.innerHTML = contentHTML;
@@ -160,7 +160,7 @@ function showModal(title, contentHTML, onConfirm = null) {
   closeBtn.style.cssText = `
     padding: 10px 22px; border: none; border-radius: 8px;
     background: rgba(255,255,255,0.1); color: #fff; cursor: pointer;
-    font-family: 'Poppins', sans-serif;
+    font-family: 'Exo 2', sans-serif;
   `;
   closeBtn.addEventListener("click", () => overlay.remove());
 
@@ -171,8 +171,8 @@ function showModal(title, contentHTML, onConfirm = null) {
     confirmBtn.textContent = "Confirm";
     confirmBtn.style.cssText = `
       padding: 10px 22px; border: none; border-radius: 8px;
-      background: linear-gradient(90deg, #ff0033, #ff5500);
-      color: #fff; cursor: pointer; font-family: 'Poppins', sans-serif;
+      background: linear-gradient(90deg, #006af5, #08a5e2);
+      color: #fff; cursor: pointer; font-family: 'Exo 2', sans-serif;
     `;
     confirmBtn.addEventListener("click", () => {
       onConfirm();
@@ -226,7 +226,7 @@ async function registerUser(email, password, name, role) {
   const uid  = cred.user.uid;
   const shareCode = generateShareCode();
 
-  // AWAIT the profile write — do NOT fire-and-forget.
+  // AWAIT the profile write â€” do NOT fire-and-forget.
   // This ensures the profile exists in RTDB before any redirect.
   try {
     await db.ref("users/" + uid).set({
@@ -276,7 +276,7 @@ async function loginUser(email, password) {
  */
 async function logoutUser() {
   await auth.signOut();
-  window.location.href = "XgymIndex.xxxx.html";
+  window.location.href = "index.html";
 }
 
 /**
@@ -575,12 +575,12 @@ async function getTrainerClients(trainerId) {
   return profiles.filter(Boolean);
 }
 
-/** Alias — fetch progress for a specific client (trainer view). */
+/** Alias â€” fetch progress for a specific client (trainer view). */
 async function getClientProgress(clientId) {
   return getProgress(clientId);
 }
 
-/** Alias — fetch meals for a specific client (trainer view). */
+/** Alias â€” fetch meals for a specific client (trainer view). */
 async function getClientMeals(clientId) {
   return getMeals(clientId);
 }
@@ -616,7 +616,7 @@ async function createMealPlan(trainerId, clientId, plan) {
 }
 
 // ============================================================
-// SECTION 7: ADMIN PANEL — DATA FUNCTIONS
+// SECTION 7: ADMIN PANEL â€” DATA FUNCTIONS
 // ============================================================
 
 // ---------- Admin Auth Check ----------
@@ -863,7 +863,7 @@ async function getAdminStats() {
  */
 function detectPage() {
   const path = window.location.pathname.toLowerCase();
-  if (path.includes("xgymindex"))        return "index";
+  if (path.includes("xgymindex") || path.endsWith("index.html") || path === "/" || path === "") return "index";
   if (path.includes("dashboardclient"))  return "client";
   if (path.includes("trainerdashboard")) return "trainer";
   if (path.includes("admindashboard"))   return "admin";
@@ -915,7 +915,7 @@ function initIndexPage() {
     if (_authActionInProgress) return;
 
     if (user) {
-      // Already logged in (e.g. returning user) — redirect to dashboard
+      // Already logged in (e.g. returning user) â€” redirect to dashboard
       let profile = null;
       for (let attempt = 0; attempt < 6; attempt++) {
         try {
@@ -1004,9 +1004,9 @@ function _initAuthForms() {
 
       try {
         loginBtn.disabled = true;
-        loginBtn.textContent = "Logging in…";
+        loginBtn.textContent = "Logging inâ€¦";
         const cred = await loginUser(emailVal, passwordVal);
-        console.log("[X-Gym] Login done, fetching profile…");
+        console.log("[X-Gym] Login done, fetching profileâ€¦");
         // Try to get profile for role-based redirect (with retries)
         let target = "DashboardClient.xxx.html";
         let profile = null;
@@ -1030,7 +1030,7 @@ function _initAuthForms() {
           }
         } else {
           console.error("[X-Gym] Could not fetch profile after retries! uid:", cred.user.uid);
-          // Profile doesn't exist — likely the RTDB write failed during registration.
+          // Profile doesn't exist â€” likely the RTDB write failed during registration.
           // Try to create a basic profile NOW so the user isn't stuck.
           try {
             await db.ref("users/" + cred.user.uid).set({
@@ -1041,7 +1041,7 @@ function _initAuthForms() {
               createdAt: Date.now()
             });
             console.log("[X-Gym] Emergency profile created as client");
-            showToast("Your profile was missing — a default profile was created. Contact admin if you should have a different role.", "info");
+            showToast("Your profile was missing â€” a default profile was created. Contact admin if you should have a different role.", "info");
           } catch (epErr) {
             console.error("[X-Gym] Emergency profile creation also failed:", epErr);
           }
@@ -1075,9 +1075,9 @@ function _initAuthForms() {
 
       try {
         registerBtn.disabled = true;
-        registerBtn.textContent = "Registering…";
+        registerBtn.textContent = "Registeringâ€¦";
         await registerUser(emailVal, passwordVal, nameVal, selectedRole);
-        console.log("[X-Gym] Register done, redirecting…");
+        console.log("[X-Gym] Register done, redirectingâ€¦");
         // Redirect IMMEDIATELY based on the role they selected
         // >>> ADMIN REDIRECT: Comment out the admin line below once admin accounts are created <<<
         let target = "DashboardClient.xxx.html";
@@ -1102,7 +1102,7 @@ function _initAuthForms() {
 async function initClientPage() {
   const user = await waitForAuth();
   if (!user) {
-    window.location.href = "XgymIndex.xxxx.html";
+    window.location.href = "index.html";
     return;
   }
 
@@ -1119,7 +1119,7 @@ async function initClientPage() {
 
   if (!profile || profile.role !== "client") {
     console.warn("[X-Gym] Client page: invalid profile or role", profile);
-    window.location.href = "XgymIndex.xxxx.html";
+    window.location.href = "index.html";
     return;
   }
 
@@ -1175,7 +1175,7 @@ async function _loadClientTrainersPanel(clientId) {
   const panel = document.getElementById("panel-trainers");
   if (!panel) return;
 
-  panel.innerHTML = "<h2 style='color:#ff4d4d'>Available Trainers</h2>";
+  panel.innerHTML = "<h2 style='color:#08a5e2'>Available Trainers</h2>";
 
   try {
     const trainers = await getAvailableTrainers();
@@ -1195,13 +1195,13 @@ async function _loadClientTrainersPanel(clientId) {
       card.innerHTML = `
         <h3>${trainer.name}</h3>
         <p>${trainer.email}</p>
-        <p>Share Code: <strong>${trainer.shareCode || "—"}</strong></p>
+        <p>Share Code: <strong>${trainer.shareCode || "â€”"}</strong></p>
         <button
           class="btn-hire"
           data-tid="${trainer.id}"
           style="margin-top:10px;padding:8px 18px;border:none;border-radius:8px;
-                 background:${hired ? "rgba(255,255,255,0.15)" : "linear-gradient(90deg,#ff0033,#ff5500)"};
-                 color:#fff;cursor:${hired ? "default" : "pointer"};font-family:Poppins,sans-serif;"
+                 background:${hired ? "rgba(255,255,255,0.15)" : "linear-gradient(90deg,#006af5,#08a5e2)"};
+                 color:#fff;cursor:${hired ? "default" : "pointer"};font-family:'Exo 2',sans-serif;"
           ${hired ? "disabled" : ""}>
           ${hired ? "Hired" : "Hire Trainer"}
         </button>
@@ -1222,7 +1222,7 @@ async function _loadClientTrainersPanel(clientId) {
       });
     });
   } catch (e) {
-    panel.innerHTML += `<p style="color:#ff4d4d">${e.message}</p>`;
+    panel.innerHTML += `<p style="color:#08a5e2">${e.message}</p>`;
   }
 }
 
@@ -1230,7 +1230,7 @@ async function _loadClientWorkoutsPanel(clientId) {
   const panel = document.getElementById("panel-workouts");
   if (!panel) return;
 
-  panel.innerHTML = "<h2 style='color:#ff4d4d'>My Workout Plans</h2>";
+  panel.innerHTML = "<h2 style='color:#08a5e2'>My Workout Plans</h2>";
 
   try {
     const workouts = await getClientWorkouts(clientId);
@@ -1243,7 +1243,7 @@ async function _loadClientWorkoutsPanel(clientId) {
       card.className = "card";
       card.style.marginBottom = "16px";
       const exHtml = (w.exercises || []).map(ex =>
-        `<li>${ex.name} — ${ex.sets}×${ex.reps}${ex.notes ? " ("+ex.notes+")" : ""}</li>`
+        `<li>${ex.name} â€” ${ex.sets}Ã—${ex.reps}${ex.notes ? " ("+ex.notes+")" : ""}</li>`
       ).join("");
       card.innerHTML = `
         <h3>${w.day || "Workout"}</h3>
@@ -1253,7 +1253,7 @@ async function _loadClientWorkoutsPanel(clientId) {
       panel.appendChild(card);
     });
   } catch (e) {
-    panel.innerHTML += `<p style="color:#ff4d4d">${e.message}</p>`;
+    panel.innerHTML += `<p style="color:#08a5e2">${e.message}</p>`;
   }
 }
 
@@ -1262,28 +1262,28 @@ async function _loadClientProgressPanel(clientId, shareCode) {
   if (!panel) return;
 
   panel.innerHTML = `
-    <h2 style="color:#ff4d4d">Progress Tracker</h2>
-    ${shareCode ? `<p style="opacity:0.6">Your share code: <strong style="color:#ff4d4d">${shareCode}</strong></p>` : ""}
+    <h2 style="color:#08a5e2">Progress Tracker</h2>
+    ${shareCode ? `<p style="opacity:0.6">Your share code: <strong style="color:#08a5e2">${shareCode}</strong></p>` : ""}
     <div class="card" style="margin-bottom:20px">
       <h3>Log Progress</h3>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
         <input id="prog-weight" type="number" placeholder="Weight (kg)"
           style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-                 background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+                 background:rgba(255,255,255,0.05);color:#fff;font-family:'Exo 2',sans-serif">
         <input id="prog-bench" type="number" placeholder="Bench Press (kg)"
           style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-                 background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+                 background:rgba(255,255,255,0.05);color:#fff;font-family:'Exo 2',sans-serif">
         <input id="prog-squat" type="number" placeholder="Squat (kg)"
           style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-                 background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+                 background:rgba(255,255,255,0.05);color:#fff;font-family:'Exo 2',sans-serif">
         <input id="prog-deadlift" type="number" placeholder="Deadlift (kg)"
           style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-                 background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+                 background:rgba(255,255,255,0.05);color:#fff;font-family:'Exo 2',sans-serif">
       </div>
       <button id="log-progress-btn"
         style="margin-top:14px;padding:10px 24px;border:none;border-radius:8px;
-               background:linear-gradient(90deg,#ff0033,#ff5500);color:#fff;
-               cursor:pointer;font-family:Poppins,sans-serif">
+               background:linear-gradient(90deg,#006af5,#08a5e2);color:#fff;
+               cursor:pointer;font-family:'Exo 2',sans-serif">
         Log Progress
       </button>
     </div>
@@ -1328,7 +1328,7 @@ async function _refreshProgressList(clientId) {
       </div>
     `).join("");
   } catch (e) {
-    list.innerHTML = `<p style="color:#ff4d4d">${e.message}</p>`;
+    list.innerHTML = `<p style="color:#08a5e2">${e.message}</p>`;
   }
 }
 
@@ -1337,30 +1337,30 @@ async function _loadClientMealsPanel(clientId) {
   if (!panel) return;
 
   panel.innerHTML = `
-    <h2 style="color:#ff4d4d">Meal / Food Intake Tracker</h2>
+    <h2 style="color:#08a5e2">Meal / Food Intake Tracker</h2>
     <div class="card" style="margin-bottom:20px">
       <h3>Log Meal</h3>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
         <input id="meal-name" type="text" placeholder="Meal name"
           style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-                 background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif;grid-column:span 2">
+                 background:rgba(255,255,255,0.05);color:#fff;font-family:'Exo 2',sans-serif;grid-column:span 2">
         <input id="meal-calories" type="number" placeholder="Calories"
           style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-                 background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+                 background:rgba(255,255,255,0.05);color:#fff;font-family:'Exo 2',sans-serif">
         <input id="meal-protein" type="number" placeholder="Protein (g)"
           style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-                 background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+                 background:rgba(255,255,255,0.05);color:#fff;font-family:'Exo 2',sans-serif">
         <input id="meal-carbs" type="number" placeholder="Carbs (g)"
           style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-                 background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+                 background:rgba(255,255,255,0.05);color:#fff;font-family:'Exo 2',sans-serif">
         <input id="meal-fats" type="number" placeholder="Fats (g)"
           style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-                 background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+                 background:rgba(255,255,255,0.05);color:#fff;font-family:'Exo 2',sans-serif">
       </div>
       <button id="log-meal-btn"
         style="margin-top:14px;padding:10px 24px;border:none;border-radius:8px;
-               background:linear-gradient(90deg,#ff0033,#ff5500);color:#fff;
-               cursor:pointer;font-family:Poppins,sans-serif">
+               background:linear-gradient(90deg,#006af5,#08a5e2);color:#fff;
+               cursor:pointer;font-family:'Exo 2',sans-serif">
         Log Meal
       </button>
     </div>
@@ -1398,7 +1398,7 @@ async function _refreshMealList(clientId) {
     }
     list.innerHTML = entries.map(m => `
       <div class="card" style="margin-bottom:12px;font-size:0.9rem">
-        <strong>${m.mealName}</strong> — ${formatDate(m.createdAt)}<br>
+        <strong>${m.mealName}</strong> â€” ${formatDate(m.createdAt)}<br>
         Calories: ${m.calories} &nbsp;|&nbsp;
         Protein: ${m.protein}g &nbsp;|&nbsp;
         Carbs: ${m.carbs}g &nbsp;|&nbsp;
@@ -1406,7 +1406,7 @@ async function _refreshMealList(clientId) {
       </div>
     `).join("");
   } catch (e) {
-    list.innerHTML = `<p style="color:#ff4d4d">${e.message}</p>`;
+    list.innerHTML = `<p style="color:#08a5e2">${e.message}</p>`;
   }
 }
 
@@ -1414,7 +1414,7 @@ async function _loadClientMembershipPanel(clientId) {
   const panel = document.getElementById("panel-membership");
   if (!panel) return;
 
-  panel.innerHTML = "<h2 style='color:#ff4d4d'>Membership Status</h2>";
+  panel.innerHTML = "<h2 style='color:#08a5e2'>Membership Status</h2>";
 
   try {
     const membership = await getMembership(clientId);
@@ -1425,12 +1425,12 @@ async function _loadClientMembershipPanel(clientId) {
     panel.innerHTML += `
       <div class="card">
         <h3>${membership.type || "Standard"}</h3>
-        <p>Status: <strong style="color:${membership.status === "active" ? "#00c850" : "#ff4d4d"}">${membership.status || "Unknown"}</strong></p>
+        <p>Status: <strong style="color:${membership.status === "active" ? "#00c850" : "#08a5e2"}">${membership.status || "Unknown"}</strong></p>
         <p>Expiry: ${formatDate(membership.expiresAt)}</p>
       </div>
     `;
   } catch (e) {
-    panel.innerHTML += `<p style="color:#ff4d4d">${e.message}</p>`;
+    panel.innerHTML += `<p style="color:#08a5e2">${e.message}</p>`;
   }
 }
 
@@ -1441,13 +1441,13 @@ function _loadCartPanel() {
   function render() {
     const cart = getCart();
     panel.innerHTML = `
-      <h2 style="color:#ff4d4d">My Cart</h2>
+      <h2 style="color:#08a5e2">My Cart</h2>
       ${cart.length === 0
         ? "<p>Your cart is empty.</p>"
         : cart.map(item => `
             <div class="card" style="margin-bottom:12px;display:flex;align-items:center;justify-content:space-between">
-              <span>${item.name} × ${item.qty}</span>
-              <span>£${(item.price * item.qty).toFixed(2)}</span>
+              <span>${item.name} Ã— ${item.qty}</span>
+              <span>Â£${(item.price * item.qty).toFixed(2)}</span>
               <button data-id="${item.id}" class="remove-cart-btn"
                 style="padding:6px 14px;border:none;border-radius:6px;
                        background:rgba(255,0,60,0.6);color:#fff;cursor:pointer">
@@ -1458,7 +1458,7 @@ function _loadCartPanel() {
       }
       ${cart.length > 0 ? `
         <p style="text-align:right;font-size:1.1rem">
-          Total: £${cart.reduce((s,i) => s + i.price*i.qty, 0).toFixed(2)}
+          Total: Â£${cart.reduce((s,i) => s + i.price*i.qty, 0).toFixed(2)}
         </p>
         <button id="clear-cart-btn"
           style="padding:10px 24px;border:none;border-radius:8px;
@@ -1483,7 +1483,7 @@ function _loadCartPanel() {
 async function initTrainerPage() {
   const user = await waitForAuth();
   if (!user) {
-    window.location.href = "XgymIndex.xxxx.html";
+    window.location.href = "index.html";
     return;
   }
 
@@ -1500,7 +1500,7 @@ async function initTrainerPage() {
 
   if (!profile || profile.role !== "trainer") {
     console.warn("[X-Gym] Trainer page: invalid profile or role", profile);
-    window.location.href = "XgymIndex.xxxx.html";
+    window.location.href = "index.html";
     return;
   }
 
@@ -1540,10 +1540,10 @@ function _loadTrainerShareCodePanel(shareCode) {
   const panel = document.getElementById("panel-share-code");
   if (!panel) return;
   panel.innerHTML = `
-    <h2 style="color:#ff4d4d">Your Share Code</h2>
+    <h2 style="color:#08a5e2">Your Share Code</h2>
     <div class="card">
       <p>Give this code to clients so they can find you:</p>
-      <div style="font-size:2rem;font-weight:900;letter-spacing:6px;color:#ff4d4d;margin:14px 0">
+      <div style="font-size:2rem;font-weight:900;letter-spacing:6px;color:#08a5e2;margin:14px 0">
         ${shareCode || "N/A"}
       </div>
     </div>
@@ -1555,17 +1555,17 @@ async function _loadTrainerClientsPanel(trainerUid) {
   if (!panel) return;
 
   panel.innerHTML = `
-    <h2 style="color:#ff4d4d">My Clients</h2>
+    <h2 style="color:#08a5e2">My Clients</h2>
     <div class="card" style="margin-bottom:20px">
       <h3>Add Client by Share Code</h3>
       <div style="display:flex;gap:12px;margin-top:12px">
         <input id="client-share-code-input" type="text" placeholder="Client share code"
           style="flex:1;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-                 background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+                 background:rgba(255,255,255,0.05);color:#fff;font-family:'Exo 2',sans-serif">
         <button id="add-client-btn"
           style="padding:10px 22px;border:none;border-radius:8px;
-                 background:linear-gradient(90deg,#ff0033,#ff5500);color:#fff;
-                 cursor:pointer;font-family:Poppins,sans-serif">
+                 background:linear-gradient(90deg,#006af5,#08a5e2);color:#fff;
+                 cursor:pointer;font-family:'Exo 2',sans-serif">
           Add
         </button>
       </div>
@@ -1606,11 +1606,11 @@ async function _refreshClientList(trainerUid) {
       card.innerHTML = `
         <h3>${client.name}</h3>
         <p>${client.email}</p>
-        <p style="font-size:0.85rem;opacity:0.6">Share Code: ${client.shareCode || "—"}</p>
+        <p style="font-size:0.85rem;opacity:0.6">Share Code: ${client.shareCode || "â€”"}</p>
         <button class="view-client-btn" data-cid="${client.id}" data-cname="${client.name}"
           style="margin-top:10px;padding:8px 18px;border:none;border-radius:8px;
-                 background:linear-gradient(90deg,#ff0033,#ff5500);color:#fff;
-                 cursor:pointer;font-family:Poppins,sans-serif">
+                 background:linear-gradient(90deg,#006af5,#08a5e2);color:#fff;
+                 cursor:pointer;font-family:'Exo 2',sans-serif">
           View Details
         </button>
       `;
@@ -1626,7 +1626,7 @@ async function _refreshClientList(trainerUid) {
       });
     });
   } catch (e) {
-    list.innerHTML = `<p style="color:#ff4d4d">${e.message}</p>`;
+    list.innerHTML = `<p style="color:#08a5e2">${e.message}</p>`;
   }
 }
 
@@ -1634,8 +1634,8 @@ async function _loadClientDetailPanel(clientId, clientName) {
   const panel = document.getElementById("panel-client-detail");
   if (!panel) return;
 
-  panel.innerHTML = `<h2 style="color:#ff4d4d">${clientName}'s Details</h2>
-    <p style="opacity:0.6">Loading…</p>`;
+  panel.innerHTML = `<h2 style="color:#08a5e2">${clientName}'s Details</h2>
+    <p style="opacity:0.6">Loadingâ€¦</p>`;
 
   try {
     const [progressEntries, meals] = await Promise.all([
@@ -1656,17 +1656,17 @@ async function _loadClientDetailPanel(clientId, clientName) {
       ? "<p>No meals logged.</p>"
       : meals.map(m => `
           <div class="card" style="margin-bottom:10px;font-size:0.9rem">
-            <strong>${m.mealName}</strong> — ${formatDate(m.createdAt)}<br>
+            <strong>${m.mealName}</strong> â€” ${formatDate(m.createdAt)}<br>
             Cal: ${m.calories} | Protein: ${m.protein}g | Carbs: ${m.carbs}g | Fats: ${m.fats}g
           </div>`).join("");
 
     panel.innerHTML = `
-      <h2 style="color:#ff4d4d">${clientName}'s Details</h2>
+      <h2 style="color:#08a5e2">${clientName}'s Details</h2>
       <h3 style="margin-top:20px">Progress</h3>${progressHtml}
       <h3 style="margin-top:20px">Meal Log</h3>${mealsHtml}
     `;
   } catch (e) {
-    panel.innerHTML += `<p style="color:#ff4d4d">${e.message}</p>`;
+    panel.innerHTML += `<p style="color:#08a5e2">${e.message}</p>`;
   }
 }
 
@@ -1675,28 +1675,28 @@ async function _loadTrainerWorkoutBuilderPanel(trainerUid) {
   if (!panel) return;
 
   panel.innerHTML = `
-    <h2 style="color:#ff4d4d">Workout Builder</h2>
+    <h2 style="color:#08a5e2">Workout Builder</h2>
     <div class="card">
       <h3>Create Workout for Client</h3>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
         <input id="wb-client-code" type="text" placeholder="Client share code"
           style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-                 background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+                 background:rgba(255,255,255,0.05);color:#fff;font-family:'Exo 2',sans-serif">
         <input id="wb-day" type="text" placeholder="Day (e.g. Monday)"
           style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-                 background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+                 background:rgba(255,255,255,0.05);color:#fff;font-family:'Exo 2',sans-serif">
       </div>
       <div id="wb-exercises" style="margin-top:16px"></div>
       <button id="wb-add-exercise"
         style="margin-top:10px;padding:8px 18px;border:none;border-radius:8px;
-               background:rgba(255,255,255,0.1);color:#fff;cursor:pointer;font-family:Poppins,sans-serif">
+               background:rgba(255,255,255,0.1);color:#fff;cursor:pointer;font-family:'Exo 2',sans-serif">
         + Add Exercise
       </button>
       <br><br>
       <button id="wb-save"
         style="padding:10px 24px;border:none;border-radius:8px;
-               background:linear-gradient(90deg,#ff0033,#ff5500);color:#fff;
-               cursor:pointer;font-family:Poppins,sans-serif">
+               background:linear-gradient(90deg,#006af5,#08a5e2);color:#fff;
+               cursor:pointer;font-family:'Exo 2',sans-serif">
         Save Workout
       </button>
     </div>
@@ -1711,16 +1711,16 @@ async function _loadTrainerWorkoutBuilderPanel(trainerUid) {
     row.innerHTML = `
       <input class="wb-ex-name" type="text" placeholder="Exercise name"
         style="padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-               background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+               background:rgba(255,255,255,0.05);color:#fff;font-family:'Exo 2',sans-serif">
       <input class="wb-ex-sets" type="number" placeholder="Sets"
         style="padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-               background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+               background:rgba(255,255,255,0.05);color:#fff;font-family:'Exo 2',sans-serif">
       <input class="wb-ex-reps" type="number" placeholder="Reps"
         style="padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-               background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+               background:rgba(255,255,255,0.05);color:#fff;font-family:'Exo 2',sans-serif">
       <input class="wb-ex-notes" type="text" placeholder="Notes (optional)"
         style="padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-               background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+               background:rgba(255,255,255,0.05);color:#fff;font-family:'Exo 2',sans-serif">
     `;
     document.getElementById("wb-exercises").appendChild(row);
   });
@@ -1761,28 +1761,28 @@ async function _loadTrainerMealPlannerPanel(trainerUid) {
   if (!panel) return;
 
   panel.innerHTML = `
-    <h2 style="color:#ff4d4d">Meal Planner</h2>
+    <h2 style="color:#08a5e2">Meal Planner</h2>
     <div class="card">
       <h3>Create Meal Plan for Client</h3>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
         <input id="mp-client-code" type="text" placeholder="Client share code"
           style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-                 background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+                 background:rgba(255,255,255,0.05);color:#fff;font-family:'Exo 2',sans-serif">
         <input id="mp-day" type="text" placeholder="Day (e.g. Monday)"
           style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-                 background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+                 background:rgba(255,255,255,0.05);color:#fff;font-family:'Exo 2',sans-serif">
       </div>
       <div id="mp-meals" style="margin-top:16px"></div>
       <button id="mp-add-meal"
         style="margin-top:10px;padding:8px 18px;border:none;border-radius:8px;
-               background:rgba(255,255,255,0.1);color:#fff;cursor:pointer;font-family:Poppins,sans-serif">
+               background:rgba(255,255,255,0.1);color:#fff;cursor:pointer;font-family:'Exo 2',sans-serif">
         + Add Meal
       </button>
       <br><br>
       <button id="mp-save"
         style="padding:10px 24px;border:none;border-radius:8px;
-               background:linear-gradient(90deg,#ff0033,#ff5500);color:#fff;
-               cursor:pointer;font-family:Poppins,sans-serif">
+               background:linear-gradient(90deg,#006af5,#08a5e2);color:#fff;
+               cursor:pointer;font-family:'Exo 2',sans-serif">
         Save Meal Plan
       </button>
     </div>
@@ -1794,22 +1794,22 @@ async function _loadTrainerMealPlannerPanel(trainerUid) {
     row.innerHTML = `
       <input class="mp-m-name" type="text" placeholder="Meal name"
         style="padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-               background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+               background:rgba(255,255,255,0.05);color:#fff;font-family:'Exo 2',sans-serif">
       <input class="mp-m-cal" type="number" placeholder="Cal"
         style="padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-               background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+               background:rgba(255,255,255,0.05);color:#fff;font-family:'Exo 2',sans-serif">
       <input class="mp-m-protein" type="number" placeholder="Protein"
         style="padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-               background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+               background:rgba(255,255,255,0.05);color:#fff;font-family:'Exo 2',sans-serif">
       <input class="mp-m-carbs" type="number" placeholder="Carbs"
         style="padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-               background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+               background:rgba(255,255,255,0.05);color:#fff;font-family:'Exo 2',sans-serif">
       <input class="mp-m-fats" type="number" placeholder="Fats"
         style="padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-               background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+               background:rgba(255,255,255,0.05);color:#fff;font-family:'Exo 2',sans-serif">
       <input class="mp-m-time" type="text" placeholder="Time (e.g. 8am)"
         style="padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-               background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+               background:rgba(255,255,255,0.05);color:#fff;font-family:'Exo 2',sans-serif">
     `;
     document.getElementById("mp-meals").appendChild(row);
   });
@@ -1850,7 +1850,7 @@ async function _loadTrainerMembershipPanel(trainerUid) {
   const panel = document.getElementById("panel-membership");
   if (!panel) return;
 
-  panel.innerHTML = "<h2 style='color:#ff4d4d'>Membership Status</h2>";
+  panel.innerHTML = "<h2 style='color:#08a5e2'>Membership Status</h2>";
 
   try {
     const membership = await getMembership(trainerUid);
@@ -1861,12 +1861,12 @@ async function _loadTrainerMembershipPanel(trainerUid) {
     panel.innerHTML += `
       <div class="card">
         <h3>${membership.type || "Standard"}</h3>
-        <p>Status: <strong style="color:${membership.status === "active" ? "#00c850" : "#ff4d4d"}">${membership.status || "Unknown"}</strong></p>
+        <p>Status: <strong style="color:${membership.status === "active" ? "#00c850" : "#08a5e2"}">${membership.status || "Unknown"}</strong></p>
         <p>Expiry: ${formatDate(membership.expiresAt)}</p>
       </div>
     `;
   } catch (e) {
-    panel.innerHTML += `<p style="color:#ff4d4d">${e.message}</p>`;
+    panel.innerHTML += `<p style="color:#08a5e2">${e.message}</p>`;
   }
 }
 
@@ -1882,7 +1882,7 @@ async function initAdminPage() {
 
   if (!user) {
     console.warn("[X-Gym] initAdminPage: no user, redirecting to index");
-    window.location.href = "XgymIndex.xxxx.html";
+    window.location.href = "index.html";
     return;
   }
 
@@ -1901,7 +1901,7 @@ async function initAdminPage() {
   if (!profile || profile.role !== "admin") {
     console.warn("[X-Gym] Admin page: invalid profile or role", profile);
     showToast("Access denied. Admin only. Profile role: " + (profile ? profile.role : "null"), "error");
-    setTimeout(function() { window.location.href = "XgymIndex.xxxx.html"; }, 2000);
+    setTimeout(function() { window.location.href = "index.html"; }, 2000);
     return;
   }
 
@@ -1950,31 +1950,31 @@ async function _loadAdminOverviewPanel() {
   const panel = document.getElementById("panel-overview");
   if (!panel) return;
 
-  panel.innerHTML = "<h2 style='color:#ff4d4d'>Loading statistics…</h2>";
+  panel.innerHTML = "<h2 style='color:#08a5e2'>Loading statisticsâ€¦</h2>";
 
   try {
     const stats = await getAdminStats();
 
     panel.innerHTML = `
-      <h2 style="color:#ff4d4d">Gym Overview</h2>
+      <h2 style="color:#08a5e2">Gym Overview</h2>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:30px">
-        <div class="card"><h3 style="color:#ff4d4d;font-size:2rem">${stats.totalMembers}</h3><p>Total Members</p></div>
+        <div class="card"><h3 style="color:#08a5e2;font-size:2rem">${stats.totalMembers}</h3><p>Total Members</p></div>
         <div class="card"><h3 style="color:#00c850;font-size:2rem">${stats.totalClients}</h3><p>Clients</p></div>
         <div class="card"><h3 style="color:#ffa500;font-size:2rem">${stats.totalTrainers}</h3><p>Trainers</p></div>
         <div class="card"><h3 style="color:#00c850;font-size:2rem">${stats.activeMemberships}</h3><p>Active Memberships</p></div>
-        <div class="card"><h3 style="color:#ff4d4d;font-size:2rem">${stats.expiredMemberships}</h3><p>Expired Memberships</p></div>
+        <div class="card"><h3 style="color:#08a5e2;font-size:2rem">${stats.expiredMemberships}</h3><p>Expired Memberships</p></div>
         <div class="card"><h3 style="color:#4da6ff;font-size:2rem">${stats.totalStoreItems}</h3><p>Store Items</p></div>
       </div>
 
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;margin-bottom:30px">
         <div class="card">
-          <h3 style="color:#00c850;font-size:2rem">£${stats.totalRevenue.toFixed(2)}</h3><p>Total Revenue</p>
+          <h3 style="color:#00c850;font-size:2rem">Â£${stats.totalRevenue.toFixed(2)}</h3><p>Total Revenue</p>
         </div>
         <div class="card">
-          <h3 style="color:#ff4d4d;font-size:2rem">£${stats.totalExpenses.toFixed(2)}</h3><p>Total Expenses</p>
+          <h3 style="color:#08a5e2;font-size:2rem">Â£${stats.totalExpenses.toFixed(2)}</h3><p>Total Expenses</p>
         </div>
         <div class="card">
-          <h3 style="color:${stats.netProfit >= 0 ? '#00c850' : '#ff4d4d'};font-size:2rem">£${stats.netProfit.toFixed(2)}</h3><p>Net Profit</p>
+          <h3 style="color:${stats.netProfit >= 0 ? '#00c850' : '#08a5e2'};font-size:2rem">Â£${stats.netProfit.toFixed(2)}</h3><p>Net Profit</p>
         </div>
       </div>
 
@@ -1999,7 +1999,7 @@ async function _loadAdminOverviewPanel() {
     _drawMembershipPieChart(stats.activeMemberships, stats.expiredMemberships);
     _drawRolesBarChart(stats.totalClients, stats.totalTrainers, stats.totalMembers - stats.totalClients - stats.totalTrainers);
   } catch (e) {
-    panel.innerHTML = `<h2 style="color:#ff4d4d">Error</h2><p>${e.message}</p>`;
+    panel.innerHTML = `<h2 style="color:#08a5e2">Error</h2><p>${e.message}</p>`;
   }
 }
 
@@ -2015,7 +2015,7 @@ function _drawRevenueChart(monthlyRevenue, monthlyExpenses) {
   const allKeys = [...new Set([...Object.keys(monthlyRevenue), ...Object.keys(monthlyExpenses)])].sort();
   if (allKeys.length === 0) {
     ctx.fillStyle = "rgba(255,255,255,0.5)";
-    ctx.font = "14px Poppins, sans-serif";
+    ctx.font = "14px Exo 2, sans-serif";
     ctx.fillText("No transaction data yet. Record transactions to see charts.", 20, 130);
     return;
   }
@@ -2033,14 +2033,14 @@ function _drawRevenueChart(monthlyRevenue, monthlyExpenses) {
   // Y-axis grid
   ctx.strokeStyle = "rgba(255,255,255,0.1)";
   ctx.fillStyle = "rgba(255,255,255,0.5)";
-  ctx.font = "11px Poppins, sans-serif";
+  ctx.font = "11px Exo 2, sans-serif";
   for (let i = 0; i <= 5; i++) {
     const y = padding.top + h - (h * i / 5);
     ctx.beginPath();
     ctx.moveTo(padding.left, y);
     ctx.lineTo(canvas.width - padding.right, y);
     ctx.stroke();
-    ctx.fillText("£" + Math.round(maxVal * i / 5), 5, y + 4);
+    ctx.fillText("Â£" + Math.round(maxVal * i / 5), 5, y + 4);
   }
 
   allKeys.forEach((key, i) => {
@@ -2058,7 +2058,7 @@ function _drawRevenueChart(monthlyRevenue, monthlyExpenses) {
 
     // Label
     ctx.fillStyle = "rgba(255,255,255,0.6)";
-    ctx.font = "10px Poppins, sans-serif";
+    ctx.font = "10px Exo 2, sans-serif";
     ctx.save();
     ctx.translate(x + barGroupWidth / 2, canvas.height - 5);
     ctx.rotate(-0.5);
@@ -2070,7 +2070,7 @@ function _drawRevenueChart(monthlyRevenue, monthlyExpenses) {
   ctx.fillStyle = "rgba(0,200,80,0.8)";
   ctx.fillRect(canvas.width - 180, 10, 12, 12);
   ctx.fillStyle = "#fff";
-  ctx.font = "11px Poppins, sans-serif";
+  ctx.font = "11px Exo 2, sans-serif";
   ctx.fillText("Revenue", canvas.width - 164, 20);
   ctx.fillStyle = "rgba(255,77,77,0.8)";
   ctx.fillRect(canvas.width - 100, 10, 12, 12);
@@ -2088,7 +2088,7 @@ function _drawMembershipPieChart(active, expired) {
   const total = active + expired;
   if (total === 0) {
     ctx.fillStyle = "rgba(255,255,255,0.5)";
-    ctx.font = "14px Poppins, sans-serif";
+    ctx.font = "14px Exo 2, sans-serif";
     ctx.fillText("No memberships yet.", 120, 100);
     return;
   }
@@ -2116,7 +2116,7 @@ function _drawMembershipPieChart(active, expired) {
     ctx.fillStyle = slice.color;
     ctx.fillRect(220, ly, 14, 14);
     ctx.fillStyle = "#fff";
-    ctx.font = "13px Poppins, sans-serif";
+    ctx.font = "13px Exo 2, sans-serif";
     ctx.fillText(`${slice.label}: ${slice.val} (${Math.round(slice.val/total*100)}%)`, 240, ly + 12);
     ly += 30;
   });
@@ -2146,9 +2146,9 @@ function _drawRolesBarChart(clients, trainers, admins) {
     ctx.fillRect(x, 160 - barH, barW, barH);
 
     ctx.fillStyle = "#fff";
-    ctx.font = "bold 14px Poppins, sans-serif";
+    ctx.font = "bold 14px Exo 2, sans-serif";
     ctx.fillText(d.val, x + barW / 2 - 6, 155 - barH);
-    ctx.font = "12px Poppins, sans-serif";
+    ctx.font = "12px Exo 2, sans-serif";
     ctx.fillText(d.label, x + 2, 180);
   });
 }
@@ -2158,20 +2158,20 @@ async function _loadAdminMembersPanel() {
   const panel = document.getElementById("panel-members");
   if (!panel) return;
 
-  panel.innerHTML = "<h2 style='color:#ff4d4d'>Members Management</h2><p>Loading…</p>";
+  panel.innerHTML = "<h2 style='color:#08a5e2'>Members Management</h2><p>Loadingâ€¦</p>";
 
   try {
     const members = await getAllMembers();
 
     let html = `
-      <h2 style="color:#ff4d4d">Members Management</h2>
+      <h2 style="color:#08a5e2">Members Management</h2>
       <div style="margin-bottom:16px;display:flex;gap:12px;align-items:center">
-        <input id="admin-member-search" type="text" placeholder="Search by name or email…"
+        <input id="admin-member-search" type="text" placeholder="Search by name or emailâ€¦"
           style="flex:1;padding:10px 16px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-                 background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+                 background:rgba(255,255,255,0.05);color:#fff;font-family:'Exo 2',sans-serif">
         <select id="admin-member-role-filter"
           style="padding:10px 16px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-                 background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+                 background:rgba(255,255,255,0.05);color:#fff;font-family:'Exo 2',sans-serif">
           <option value="all">All Roles</option>
           <option value="client">Clients</option>
           <option value="trainer">Trainers</option>
@@ -2206,16 +2206,16 @@ async function _loadAdminMembersPanel() {
               color:${m.role === 'admin' ? '#4da6ff' : m.role === 'trainer' ? '#ffa500' : '#00c850'}">
               ${(m.role || "client").toUpperCase()}
             </span>
-            <span style="margin-left:8px;opacity:0.5;font-size:0.8rem">Code: ${m.shareCode || "—"}</span>
+            <span style="margin-left:8px;opacity:0.5;font-size:0.8rem">Code: ${m.shareCode || "â€”"}</span>
             <span style="margin-left:8px;opacity:0.5;font-size:0.8rem">Joined: ${formatDate(m.createdAt)}</span>
           </div>
           <div style="display:flex;gap:8px">
             <button class="admin-edit-member" data-uid="${m.id}" data-name="${m.name}" data-email="${m.email}" data-role="${m.role}"
-              style="padding:7px 16px;border:none;border-radius:8px;background:rgba(255,255,255,0.1);color:#fff;cursor:pointer;font-family:Poppins,sans-serif">
+              style="padding:7px 16px;border:none;border-radius:8px;background:rgba(255,255,255,0.1);color:#fff;cursor:pointer;font-family:'Exo 2',sans-serif">
               Edit
             </button>
             <button class="admin-delete-member" data-uid="${m.id}" data-name="${m.name}"
-              style="padding:7px 16px;border:none;border-radius:8px;background:rgba(255,0,60,0.5);color:#fff;cursor:pointer;font-family:Poppins,sans-serif">
+              style="padding:7px 16px;border:none;border-radius:8px;background:rgba(255,0,60,0.5);color:#fff;cursor:pointer;font-family:'Exo 2',sans-serif">
               Delete
             </button>
           </div>
@@ -2229,11 +2229,11 @@ async function _loadAdminMembersPanel() {
           showModal("Edit Member", `
             <div style="display:grid;gap:12px">
               <input id="edit-m-name" type="text" value="${btn.dataset.name}"
-                style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+                style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:'Exo 2',sans-serif">
               <input id="edit-m-email" type="email" value="${btn.dataset.email}"
-                style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+                style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:'Exo 2',sans-serif">
               <select id="edit-m-role"
-                style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+                style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:'Exo 2',sans-serif">
                 <option value="client" ${btn.dataset.role === "client" ? "selected" : ""}>Client</option>
                 <option value="trainer" ${btn.dataset.role === "trainer" ? "selected" : ""}>Trainer</option>
                 <option value="admin" ${btn.dataset.role === "admin" ? "selected" : ""}>Admin</option>
@@ -2276,7 +2276,7 @@ async function _loadAdminMembersPanel() {
       renderMembers(document.getElementById("admin-member-search").value.toLowerCase(), e.target.value);
     });
   } catch (e) {
-    panel.innerHTML = `<h2 style="color:#ff4d4d">Error</h2><p>${e.message}</p>`;
+    panel.innerHTML = `<h2 style="color:#08a5e2">Error</h2><p>${e.message}</p>`;
   }
 }
 
@@ -2285,28 +2285,28 @@ async function _loadAdminStorePanel() {
   const panel = document.getElementById("panel-store");
   if (!panel) return;
 
-  panel.innerHTML = "<h2 style='color:#ff4d4d'>Store Management</h2><p>Loading…</p>";
+  panel.innerHTML = "<h2 style='color:#08a5e2'>Store Management</h2><p>Loadingâ€¦</p>";
 
   try {
     const items = await getAllStoreItems();
 
     let html = `
-      <h2 style="color:#ff4d4d">Store Management</h2>
+      <h2 style="color:#08a5e2">Store Management</h2>
       <div class="card" style="margin-bottom:24px">
         <h3>Add New Item</h3>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
           <input id="store-add-name" type="text" placeholder="Item Name"
-            style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
-          <input id="store-add-price" type="number" step="0.01" placeholder="Price (£)"
-            style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+            style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:'Exo 2',sans-serif">
+          <input id="store-add-price" type="number" step="0.01" placeholder="Price (Â£)"
+            style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:'Exo 2',sans-serif">
           <input id="store-add-category" type="text" placeholder="Category (e.g. Supplements)"
-            style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+            style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:'Exo 2',sans-serif">
           <input id="store-add-stock" type="number" placeholder="Stock Qty"
-            style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
-          <input id="store-add-desc" type="text" placeholder="Description" style="grid-column:span 2;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+            style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:'Exo 2',sans-serif">
+          <input id="store-add-desc" type="text" placeholder="Description" style="grid-column:span 2;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:'Exo 2',sans-serif">
         </div>
         <button id="store-add-btn" style="margin-top:14px;padding:10px 24px;border:none;border-radius:8px;
-          background:linear-gradient(90deg,#ff0033,#ff5500);color:#fff;cursor:pointer;font-family:Poppins,sans-serif">
+          background:linear-gradient(90deg,#006af5,#08a5e2);color:#fff;cursor:pointer;font-family:'Exo 2',sans-serif">
           Add Item
         </button>
       </div>
@@ -2338,17 +2338,17 @@ async function _loadAdminStorePanel() {
           <div style="flex:1;min-width:200px">
             <h3 style="margin:0">${item.name}</h3>
             <p style="margin:4px 0;opacity:0.7;font-size:0.9rem">${item.description || ""}</p>
-            <span style="color:#00c850;font-weight:bold">£${(item.price || 0).toFixed(2)}</span>
-            <span style="margin-left:12px;opacity:0.6;font-size:0.85rem">Category: ${item.category || "—"}</span>
-            <span style="margin-left:12px;opacity:0.6;font-size:0.85rem">Stock: ${item.stock != null ? item.stock : "—"}</span>
+            <span style="color:#00c850;font-weight:bold">Â£${(item.price || 0).toFixed(2)}</span>
+            <span style="margin-left:12px;opacity:0.6;font-size:0.85rem">Category: ${item.category || "â€”"}</span>
+            <span style="margin-left:12px;opacity:0.6;font-size:0.85rem">Stock: ${item.stock != null ? item.stock : "â€”"}</span>
           </div>
           <div style="display:flex;gap:8px">
             <button class="admin-edit-item" data-id="${item.id}" data-name="${item.name}" data-price="${item.price}" data-category="${item.category || ""}" data-stock="${item.stock || 0}" data-desc="${item.description || ""}"
-              style="padding:7px 16px;border:none;border-radius:8px;background:rgba(255,255,255,0.1);color:#fff;cursor:pointer;font-family:Poppins,sans-serif">
+              style="padding:7px 16px;border:none;border-radius:8px;background:rgba(255,255,255,0.1);color:#fff;cursor:pointer;font-family:'Exo 2',sans-serif">
               Edit
             </button>
             <button class="admin-delete-item" data-id="${item.id}" data-name="${item.name}"
-              style="padding:7px 16px;border:none;border-radius:8px;background:rgba(255,0,60,0.5);color:#fff;cursor:pointer;font-family:Poppins,sans-serif">
+              style="padding:7px 16px;border:none;border-radius:8px;background:rgba(255,0,60,0.5);color:#fff;cursor:pointer;font-family:'Exo 2',sans-serif">
               Delete
             </button>
           </div>
@@ -2360,15 +2360,15 @@ async function _loadAdminStorePanel() {
           showModal("Edit Store Item", `
             <div style="display:grid;gap:12px">
               <input id="edit-si-name" type="text" value="${btn.dataset.name}"
-                style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif" placeholder="Name">
+                style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:'Exo 2',sans-serif" placeholder="Name">
               <input id="edit-si-price" type="number" step="0.01" value="${btn.dataset.price}"
-                style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif" placeholder="Price">
+                style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:'Exo 2',sans-serif" placeholder="Price">
               <input id="edit-si-category" type="text" value="${btn.dataset.category}"
-                style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif" placeholder="Category">
+                style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:'Exo 2',sans-serif" placeholder="Category">
               <input id="edit-si-stock" type="number" value="${btn.dataset.stock}"
-                style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif" placeholder="Stock">
+                style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:'Exo 2',sans-serif" placeholder="Stock">
               <input id="edit-si-desc" type="text" value="${btn.dataset.desc}"
-                style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif" placeholder="Description">
+                style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:'Exo 2',sans-serif" placeholder="Description">
             </div>
           `, async () => {
             try {
@@ -2399,7 +2399,7 @@ async function _loadAdminStorePanel() {
       });
     }
   } catch (e) {
-    panel.innerHTML = `<h2 style="color:#ff4d4d">Error</h2><p>${e.message}</p>`;
+    panel.innerHTML = `<h2 style="color:#08a5e2">Error</h2><p>${e.message}</p>`;
   }
 }
 
@@ -2408,7 +2408,7 @@ async function _loadAdminMembershipsPanel() {
   const panel = document.getElementById("panel-memberships");
   if (!panel) return;
 
-  panel.innerHTML = "<h2 style='color:#ff4d4d'>Memberships</h2><p>Loading…</p>";
+  panel.innerHTML = "<h2 style='color:#08a5e2'>Memberships</h2><p>Loadingâ€¦</p>";
 
   try {
     const [memberships, members] = await Promise.all([getAllMemberships(), getAllMembers()]);
@@ -2416,27 +2416,27 @@ async function _loadAdminMembershipsPanel() {
     members.forEach(m => { memberMap[m.id] = m; });
 
     let html = `
-      <h2 style="color:#ff4d4d">Memberships Management</h2>
+      <h2 style="color:#08a5e2">Memberships Management</h2>
       <div class="card" style="margin-bottom:24px">
         <h3>Create Membership</h3>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
-          <select id="mem-add-client" style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+          <select id="mem-add-client" style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:'Exo 2',sans-serif">
             <option value="">Select Member</option>
             ${members.map(m => `<option value="${m.id}">${m.name} (${m.role})</option>`).join("")}
           </select>
-          <select id="mem-add-type" style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+          <select id="mem-add-type" style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:'Exo 2',sans-serif">
             <option value="Basic">Basic</option>
             <option value="Standard">Standard</option>
             <option value="Premium">Premium</option>
             <option value="VIP">VIP</option>
           </select>
-          <input id="mem-add-price" type="number" step="0.01" placeholder="Price (£)"
-            style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+          <input id="mem-add-price" type="number" step="0.01" placeholder="Price (Â£)"
+            style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:'Exo 2',sans-serif">
           <input id="mem-add-expiry" type="date"
-            style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+            style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:'Exo 2',sans-serif">
         </div>
         <button id="mem-add-btn" style="margin-top:14px;padding:10px 24px;border:none;border-radius:8px;
-          background:linear-gradient(90deg,#ff0033,#ff5500);color:#fff;cursor:pointer;font-family:Poppins,sans-serif">
+          background:linear-gradient(90deg,#006af5,#08a5e2);color:#fff;cursor:pointer;font-family:'Exo 2',sans-serif">
           Create Membership
         </button>
       </div>
@@ -2463,7 +2463,7 @@ async function _loadAdminMembershipsPanel() {
         await recordTransaction({
           type: "membership",
           amount: price,
-          description: `${type} membership — ${(memberMap[clientId] || {}).name || clientId}`,
+          description: `${type} membership â€” ${(memberMap[clientId] || {}).name || clientId}`,
           category: "membership"
         });
         showToast("Membership created!", "success");
@@ -2484,17 +2484,17 @@ async function _loadAdminMembershipsPanel() {
           <div class="card" style="margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
             <div style="flex:1;min-width:200px">
               <h3 style="margin:0">${owner ? owner.name : m.clientId}</h3>
-              <p style="margin:4px 0;opacity:0.7;font-size:0.9rem">${m.type || "Standard"} — £${(m.price || 0).toFixed(2)}</p>
-              <span style="color:${displayStatus === 'active' ? '#00c850' : '#ff4d4d'};font-weight:bold;text-transform:uppercase;font-size:0.8rem">${displayStatus}</span>
+              <p style="margin:4px 0;opacity:0.7;font-size:0.9rem">${m.type || "Standard"} â€” Â£${(m.price || 0).toFixed(2)}</p>
+              <span style="color:${displayStatus === 'active' ? '#00c850' : '#08a5e2'};font-weight:bold;text-transform:uppercase;font-size:0.8rem">${displayStatus}</span>
               <span style="margin-left:12px;opacity:0.6;font-size:0.85rem">Expires: ${formatDate(m.expiresAt)}</span>
             </div>
             <div style="display:flex;gap:8px">
               <button class="admin-toggle-mem" data-id="${m.id}" data-status="${m.status}"
-                style="padding:7px 16px;border:none;border-radius:8px;background:rgba(255,255,255,0.1);color:#fff;cursor:pointer;font-family:Poppins,sans-serif">
+                style="padding:7px 16px;border:none;border-radius:8px;background:rgba(255,255,255,0.1);color:#fff;cursor:pointer;font-family:'Exo 2',sans-serif">
                 ${m.status === "active" ? "Deactivate" : "Activate"}
               </button>
               <button class="admin-delete-mem" data-id="${m.id}"
-                style="padding:7px 16px;border:none;border-radius:8px;background:rgba(255,0,60,0.5);color:#fff;cursor:pointer;font-family:Poppins,sans-serif">
+                style="padding:7px 16px;border:none;border-radius:8px;background:rgba(255,0,60,0.5);color:#fff;cursor:pointer;font-family:'Exo 2',sans-serif">
                 Delete
               </button>
             </div>
@@ -2526,7 +2526,7 @@ async function _loadAdminMembershipsPanel() {
       });
     }
   } catch (e) {
-    panel.innerHTML = `<h2 style="color:#ff4d4d">Error</h2><p>${e.message}</p>`;
+    panel.innerHTML = `<h2 style="color:#08a5e2">Error</h2><p>${e.message}</p>`;
   }
 }
 
@@ -2535,31 +2535,31 @@ async function _loadAdminFinancesPanel() {
   const panel = document.getElementById("panel-finances");
   if (!panel) return;
 
-  panel.innerHTML = "<h2 style='color:#ff4d4d'>Finances</h2><p>Loading…</p>";
+  panel.innerHTML = "<h2 style='color:#08a5e2'>Finances</h2><p>Loadingâ€¦</p>";
 
   try {
     const transactions = await getAllTransactions();
 
     let html = `
-      <h2 style="color:#ff4d4d">Financial Records</h2>
+      <h2 style="color:#08a5e2">Financial Records</h2>
       <div class="card" style="margin-bottom:24px">
         <h3>Record Transaction</h3>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
-          <select id="txn-type" style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+          <select id="txn-type" style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:'Exo 2',sans-serif">
             <option value="income">Income</option>
             <option value="expense">Expense</option>
             <option value="membership">Membership Payment</option>
             <option value="store_sale">Store Sale</option>
           </select>
-          <input id="txn-amount" type="number" step="0.01" placeholder="Amount (£)"
-            style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+          <input id="txn-amount" type="number" step="0.01" placeholder="Amount (Â£)"
+            style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:'Exo 2',sans-serif">
           <input id="txn-category" type="text" placeholder="Category (e.g. Equipment, Salaries)"
-            style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+            style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:'Exo 2',sans-serif">
           <input id="txn-desc" type="text" placeholder="Description"
-            style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+            style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:'Exo 2',sans-serif">
         </div>
         <button id="txn-add-btn" style="margin-top:14px;padding:10px 24px;border:none;border-radius:8px;
-          background:linear-gradient(90deg,#ff0033,#ff5500);color:#fff;cursor:pointer;font-family:Poppins,sans-serif">
+          background:linear-gradient(90deg,#006af5,#08a5e2);color:#fff;cursor:pointer;font-family:'Exo 2',sans-serif">
           Record
         </button>
       </div>
@@ -2610,17 +2610,17 @@ async function _loadAdminFinancesPanel() {
         return `
           <div class="card" style="margin-bottom:10px;font-size:0.9rem;display:flex;align-items:center;justify-content:space-between">
             <div>
-              <strong style="color:${isIncome ? '#00c850' : '#ff4d4d'}">${isIncome ? '+' : '-'}£${(t.amount || 0).toFixed(2)}</strong>
+              <strong style="color:${isIncome ? '#00c850' : '#08a5e2'}">${isIncome ? '+' : '-'}Â£${(t.amount || 0).toFixed(2)}</strong>
               <span style="margin-left:10px;opacity:0.7">${t.description || ""}</span>
               <span style="margin-left:10px;opacity:0.5;font-size:0.8rem">${t.category || ""}</span>
             </div>
-            <span style="opacity:0.5;font-size:0.8rem">${formatDate(t.createdAt)} — ${(t.type || "").toUpperCase()}</span>
+            <span style="opacity:0.5;font-size:0.8rem">${formatDate(t.createdAt)} â€” ${(t.type || "").toUpperCase()}</span>
           </div>
         `;
       }).join("");
     }
   } catch (e) {
-    panel.innerHTML = `<h2 style="color:#ff4d4d">Error</h2><p>${e.message}</p>`;
+    panel.innerHTML = `<h2 style="color:#08a5e2">Error</h2><p>${e.message}</p>`;
   }
 }
 
@@ -2634,7 +2634,7 @@ function _drawFinanceDetailChart(monthlyRev, monthlyExp) {
   const allKeys = [...new Set([...Object.keys(monthlyRev), ...Object.keys(monthlyExp)])].sort();
   if (allKeys.length === 0) {
     ctx.fillStyle = "rgba(255,255,255,0.5)";
-    ctx.font = "14px Poppins, sans-serif";
+    ctx.font = "14px Exo 2, sans-serif";
     ctx.fillText("No transaction data yet.", 20, 130);
     return;
   }
@@ -2650,17 +2650,17 @@ function _drawFinanceDetailChart(monthlyRev, monthlyExp) {
   // Grid lines
   ctx.strokeStyle = "rgba(255,255,255,0.1)";
   ctx.fillStyle = "rgba(255,255,255,0.5)";
-  ctx.font = "11px Poppins, sans-serif";
+  ctx.font = "11px Exo 2, sans-serif";
   for (let i = 0; i <= 5; i++) {
     const y = padding.top + h - (h * i / 5);
     ctx.beginPath();
     ctx.moveTo(padding.left, y);
     ctx.lineTo(canvas.width - padding.right, y);
     ctx.stroke();
-    ctx.fillText("£" + Math.round(maxVal * i / 5), 5, y + 4);
+    ctx.fillText("Â£" + Math.round(maxVal * i / 5), 5, y + 4);
   }
 
-  // Line chart — Revenue
+  // Line chart â€” Revenue
   function drawLine(values, color) {
     if (values.length < 2) return;
     ctx.beginPath();
@@ -2690,7 +2690,7 @@ function _drawFinanceDetailChart(monthlyRev, monthlyExp) {
 
   // X-axis labels
   ctx.fillStyle = "rgba(255,255,255,0.6)";
-  ctx.font = "10px Poppins, sans-serif";
+  ctx.font = "10px Exo 2, sans-serif";
   allKeys.forEach((key, i) => {
     const x = padding.left + (i / Math.max(allKeys.length - 1, 1)) * w;
     ctx.save();
@@ -2704,7 +2704,7 @@ function _drawFinanceDetailChart(monthlyRev, monthlyExp) {
   ctx.fillStyle = "rgba(0,200,80,1)";
   ctx.fillRect(canvas.width - 180, 10, 12, 12);
   ctx.fillStyle = "#fff";
-  ctx.font = "11px Poppins, sans-serif";
+  ctx.font = "11px Exo 2, sans-serif";
   ctx.fillText("Revenue", canvas.width - 164, 20);
   ctx.fillStyle = "rgba(255,77,77,1)";
   ctx.fillRect(canvas.width - 100, 10, 12, 12);
@@ -2717,7 +2717,7 @@ async function _loadAdminTrainerLinksPanel() {
   const panel = document.getElementById("panel-trainer-links");
   if (!panel) return;
 
-  panel.innerHTML = "<h2 style='color:#ff4d4d'>Trainer-Client Relationships</h2><p>Loading…</p>";
+  panel.innerHTML = "<h2 style='color:#08a5e2'>Trainer-Client Relationships</h2><p>Loadingâ€¦</p>";
 
   try {
     const [links, members] = await Promise.all([getAllTrainerClientLinks(), getAllMembers()]);
@@ -2725,7 +2725,7 @@ async function _loadAdminTrainerLinksPanel() {
     members.forEach(m => { memberMap[m.id] = m; });
 
     let html = `
-      <h2 style="color:#ff4d4d">Trainer-Client Relationships</h2>
+      <h2 style="color:#08a5e2">Trainer-Client Relationships</h2>
       <p style="opacity:0.6">${links.length} active link(s)</p>
       <div id="admin-links-list"></div>
     `;
@@ -2742,12 +2742,12 @@ async function _loadAdminTrainerLinksPanel() {
           <div class="card" style="margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
             <div>
               <strong style="color:#ffa500">${trainer ? trainer.name : link.trainerId}</strong>
-              <span style="opacity:0.5;margin:0 8px">→</span>
+              <span style="opacity:0.5;margin:0 8px">â†’</span>
               <strong style="color:#00c850">${client ? client.name : link.clientId}</strong>
               <span style="margin-left:12px;opacity:0.5;font-size:0.8rem">Since ${formatDate(link.createdAt)}</span>
             </div>
             <button class="admin-delete-link" data-id="${link.id}"
-              style="padding:7px 16px;border:none;border-radius:8px;background:rgba(255,0,60,0.5);color:#fff;cursor:pointer;font-family:Poppins,sans-serif">
+              style="padding:7px 16px;border:none;border-radius:8px;background:rgba(255,0,60,0.5);color:#fff;cursor:pointer;font-family:'Exo 2',sans-serif">
               Remove
             </button>
           </div>
@@ -2767,12 +2767,12 @@ async function _loadAdminTrainerLinksPanel() {
       });
     }
   } catch (e) {
-    panel.innerHTML = `<h2 style="color:#ff4d4d">Error</h2><p>${e.message}</p>`;
+    panel.innerHTML = `<h2 style="color:#08a5e2">Error</h2><p>${e.message}</p>`;
   }
 }
 
 // ============================================================
-// SECTION 11: BOOTSTRAP — Run correct init based on current page
+// SECTION 11: BOOTSTRAP â€” Run correct init based on current page
 // ============================================================
 (function bootstrap() {
   const page = detectPage();

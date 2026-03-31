@@ -1,24 +1,21 @@
-<!-- Updated X-Gym HTML Template with full backend integration(Firebase Auth & RTDB) -->
- <!-- Update the UI -->
-
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>X GYM — ASCEND BEYOND</title>
+<title>The Gym — ASCEND BEYOND</title>
 <link href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Exo+2:wght@200;300;400;600;700;900&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
 
 <style>
 :root {
-  --aura: #0879e2;
-  --aura2: #00ccf5;
+  --aura: #0887e2;
+  --aura2: #006af5;
   --fire: #e96d25;
   --gold: #ffd64a;
   --white: #f1f9fe;
   --black: #000d14;
   --deep: #001220;
+  --red: #ff0000;
   --border: 1px solid rgba(8,165,226,0.15);
   --bg: rgba(0,18,32,0.9);
   --main-color: var(--aura);
@@ -72,11 +69,21 @@ nav {
   padding:1rem 3rem;
   background:linear-gradient(to bottom,rgba(0,13,20,0.97),transparent);
   border-bottom:1px solid rgba(8,165,226,0.1);
+  backdrop-filter:blur(6px);
   opacity:0;transform:translateY(-20px);
 }
 .nav-logo{font-family:'Orbitron',monospace;font-size:1.3rem;font-weight:900;letter-spacing:0.15em;color:var(--white);}
-.nav-logo .x{color:var(--aura);text-shadow:0 0 20px var(--aura),0 0 40px rgba(51, 77, 39, 0.5);}
+.nav-logo {color:var(-);text-shadow:0 0 20px var(--aura),0 0 40px rgba(8,165,226,0.5);}
 .nav-power{font-family:'Orbitron',monospace;font-size:0.6rem;letter-spacing:0.3em;color:rgba(8,165,226,0.5);display:block;margin-top:-4px;}
+
+.nav-links{display:flex;gap:2rem;list-style:none;}
+.nav-links a{
+  font-family:'Orbitron',monospace;font-size:0.7rem;font-weight:600;
+  letter-spacing:0.2em;text-transform:uppercase;
+  color:rgba(241,249,254,0.6);text-decoration:none;transition:color .2s,text-shadow .2s;
+  cursor:none;
+}
+.nav-links a:hover{color:var(--white);text-shadow:0 0 10px var(--aura);}
 
 .auth-links{display:flex;gap:1.5rem;align-items:center;}
 .auth-link{
@@ -93,6 +100,12 @@ nav {
   min-height:100vh;display:flex;flex-direction:column;
   justify-content:center;align-items:center;text-align:center;
   overflow:hidden;padding:6rem 2rem 4rem;
+  background:url("https://images.unsplash.com/photo-1534438327276-14e5300c3a48") center/cover no-repeat;
+}
+.hero::after{
+  content:"";position:absolute;inset:0;
+  background:linear-gradient(transparent 30%,var(--black));
+  z-index:-1;
 }
 
 .power-rings{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);pointer-events:none;}
@@ -104,9 +117,8 @@ nav {
 .phase-sep.r{background:linear-gradient(to left,transparent,var(--aura));}
 
 .hero-title{font-family:'Black Han Sans',cursive;font-size:clamp(5rem,18vw,15rem);line-height:0.85;letter-spacing:0.06em;opacity:0;animation:powerUp .8s .5s forwards;position:relative;}
-.hero-title .t-x{display:block;color:var(--white);text-shadow:0 0 60px rgba(8,165,226,0.5),0 0 120px rgba(8,165,226,0.2);position:relative;}
-.hero-title .t-x::before{content:'X';position:absolute;inset:0;color:var(--aura);filter:blur(20px);opacity:0.3;animation:auraPulse2 2s infinite;}
-.hero-title .t-gym{display:block;color:transparent;-webkit-text-stroke:2px rgba(8,165,226,0.3);font-size:0.55em;letter-spacing:0.2em;}
+.hero-title .t-x{display:block;color:var(--white);text-shadow:0 0 60px rgba(8,165,226,0.5),0 0 120px rgba(8,165,226,0.2),0 0 20px var(--red);position:relative;}
+.hero-title .t-gym{display:block;color:;-webkit-text-stroke:2px rgba(8,165,226,0.3);font-size:0.55em;letter-spacing:0.2em;}
 @keyframes powerUp{0%{opacity:0;transform:scale(0.8)}60%{transform:scale(1.05)}100%{opacity:1;transform:scale(1)}}
 
 .hero-level{margin:2rem 0;opacity:0;animation:fadeUp .6s .8s forwards;}
@@ -122,16 +134,10 @@ nav {
 
 .hero-btns{display:flex;gap:1rem;justify-content:center;opacity:0;animation:fadeUp .6s 1.1s forwards;}
 .btn-saiyan{font-family:'Orbitron',monospace;font-size:0.75rem;font-weight:700;letter-spacing:0.2em;text-transform:uppercase;background:linear-gradient(135deg,var(--aura2),var(--aura));color:var(--white);border:none;padding:1rem 2.5rem;cursor:none;clip-path:polygon(0 0,calc(100% - 10px) 0,100% 50%,calc(100% - 10px) 100%,0 100%);transition:all .3s;box-shadow:0 0 20px rgba(8,165,226,0.3);position:relative;overflow:hidden;}
-.btn-saiyan:hover{box-shadow:0 0 40px rgba(8,165,226,0.7);transform:translateY(-2px);}
+.btn-saiyan:hover{box-shadow:0 0 40px rgba(8,165,226,0.7),0 0 60px var(--red);transform:translateY(-2px);}
 .btn-saiyan::after{content:'';position:absolute;inset:0;background:linear-gradient(135deg,rgba(255,255,255,0.2) 0%,transparent 50%);}
 .btn-ghost{font-family:'Orbitron',monospace;font-size:0.75rem;font-weight:400;letter-spacing:0.2em;text-transform:uppercase;background:transparent;color:rgba(241,249,254,0.5);border:1px solid rgba(241,249,254,0.15);padding:1rem 2.5rem;cursor:none;clip-path:polygon(0 0,calc(100% - 10px) 0,100% 50%,calc(100% - 10px) 100%,0 100%);transition:all .3s;}
 .btn-ghost:hover{color:var(--white);border-color:var(--aura);box-shadow:0 0 15px rgba(8,165,226,0.2);}
-
-/* Content section */
-.site-content{position:relative;z-index:10;background:var(--deep);border-top:1px solid rgba(8,165,226,0.15);padding:7rem 3rem;text-align:center;}
-.site-content h2{font-family:'Black Han Sans',cursive;font-size:clamp(2rem,4vw,3rem);letter-spacing:0.06em;margin-bottom:1.5rem;}
-.site-content h2 span{color:var(--aura);text-shadow:0 0 20px rgba(8,165,226,0.4);}
-.site-content p{font-size:1.1rem;font-weight:300;color:rgba(241,249,254,0.6);max-width:700px;margin:0 auto;line-height:1.8;letter-spacing:0.05em;}
 
 /* Stats */
 .stats{position:relative;z-index:10;display:grid;grid-template-columns:repeat(4,1fr);background:rgba(0,18,32,0.9);}
@@ -145,6 +151,141 @@ nav {
 .stat-val span{color:var(--aura);}
 .stat-name{font-family:'Exo 2',sans-serif;font-size:0.65rem;font-weight:600;letter-spacing:0.3em;text-transform:uppercase;color:rgba(241,249,254,0.35);display:block;margin-top:.3rem;}
 
+/* Content section */
+.site-content{position:relative;z-index:10;background:var(--deep);border-top:1px solid rgba(8,165,226,0.15);padding:7rem 3rem;text-align:center;}
+.site-content h2{font-family:'Black Han Sans',cursive;font-size:clamp(2rem,4vw,3rem);letter-spacing:0.06em;margin-bottom:1.5rem;}
+.site-content h2 span{color:var(--aura);text-shadow:0 0 20px rgba(8,165,226,0.4);}
+.site-content p{font-size:1.1rem;font-weight:300;color:rgba(241,249,254,0.6);max-width:700px;margin:0 auto;line-height:1.8;letter-spacing:0.05em;}
+
+/* Product sections (from gym page test) */
+.products-section{
+  position:relative;z-index:10;
+  padding:120px 10%;
+  background:var(--deep);
+}
+
+.product{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  margin-bottom:150px;
+  gap:60px;
+  opacity:0;
+  transform:translateY(100px);
+  transition:1s;
+}
+
+.product.show{
+  opacity:1;
+  transform:translateY(0);
+}
+
+.product:nth-child(even){
+  flex-direction:row-reverse;
+}
+
+.product-img{
+  perspective:1000px;
+}
+
+.product-img img{
+  width:420px;
+  border-radius:12px;
+  transition:transform .6s;
+  box-shadow:0 0 25px rgba(8,165,226,0.5);
+}
+
+.product-img:hover img{
+  transform:rotateY(15deg) rotateX(8deg) scale(1.05);
+  box-shadow:0 0 40px rgba(8,165,226,0.8);
+}
+
+.product-text h3{
+  font-family:'Black Han Sans',cursive;
+  color:var(--aura);
+  font-size:34px;
+  margin-bottom:10px;
+  text-shadow:0 0 15px rgba(8,165,226,0.3);
+}
+
+.product-text p{
+  opacity:.8;
+  line-height:1.6;
+  font-size:1.1rem;
+}
+
+/* Parallax */
+.parallax{
+  position:relative;z-index:10;
+  height:450px;
+  background-attachment:fixed;
+  background-size:cover;
+  background-position:center;
+  margin:0;
+}
+
+.parallax::after{
+  content:"";
+  position:absolute;
+  width:100%;
+  height:100%;
+  background:linear-gradient(rgba(0,18,32,0.6),rgba(0,13,20,0.8));
+}
+
+/* Cards */
+.cards-section{
+  position:relative;z-index:10;
+  padding:80px 10%;
+  background:var(--deep);
+}
+
+.cards-section h2{
+  text-align:center;
+  font-family:'Black Han Sans',cursive;
+  font-size:clamp(2rem,4vw,3rem);
+  margin-bottom:60px;
+}
+
+.cards-section h2 span{
+  color:var(--aura);
+  text-shadow:0 0 20px rgba(8,165,226,0.4);
+}
+
+.cards{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(250px,1fr));
+  gap:40px;
+}
+
+.card{
+  background:rgba(0,18,32,0.9);
+  padding:40px;
+  text-align:center;
+  border-radius:15px;
+  border:1px solid rgba(8,165,226,0.15);
+  transition:.4s;
+  transform-style:preserve-3d;
+  cursor:none;
+}
+
+.card:hover{
+  transform:rotateY(10deg) rotateX(10deg) scale(1.05);
+  box-shadow:0 20px 40px rgba(8,165,226,0.3);
+  border-color:var(--aura);
+}
+
+.card h4{
+  font-family:'Orbitron',monospace;
+  color:var(--aura);
+  margin-bottom:10px;
+  letter-spacing:0.1em;
+  text-shadow:0 0 10px rgba(8,165,226,0.3);
+}
+
+.card p{
+  color:rgba(241,249,254,0.6);
+}
+
 /* Ticker */
 .ticker{position:relative;z-index:10;overflow:hidden;padding:.9rem 0;background:var(--aura);}
 .ticker-inner{display:flex;gap:3rem;animation:tickerScroll 20s linear infinite;white-space:nowrap;}
@@ -153,6 +294,24 @@ nav {
 @keyframes tickerScroll{from{transform:translateX(0)}to{transform:translateX(-50%)}}
 
 /* Tables */
+.schedule-section{
+  position:relative;z-index:10;
+  padding:80px 3rem;
+  background:var(--deep);
+}
+
+.schedule-section .heading{
+  text-align:center;
+  font-family:'Black Han Sans',cursive;
+  font-size:clamp(2rem,4vw,3rem);
+  margin-bottom:40px;
+}
+
+.schedule-section .heading span{
+  color:var(--aura);
+  text-shadow:0 0 20px rgba(8,165,226,0.4);
+}
+
 .table.box-container {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr));
@@ -171,6 +330,12 @@ nav {
 .table.box-container .box .day h3{
   font-size: 1.5rem;
   color: var(--black);
+  font-family:'Orbitron',monospace;
+}
+
+.table.box-container .box .day span{
+  color: var(--black);
+  font-size: 0.8rem;
 }
 
 .table.box-container .box .workout{
@@ -179,15 +344,17 @@ nav {
 
 .table.box-container .box .workout p{
   padding: 1rem 2rem;
-  font-size: 1.6rem;
-  color: var(--black);
+  font-size: 1rem;
+  color: var(--white);
   line-height: 1.4;
   border: var(--border);
+  transition: all 0.3s;
 }
 
-.table.box-container .box .workout p:is(:hover, .hover) {
+.table.box-container .box .workout p:hover {
   background-color: var(--main-color);
   color:var(--black);
+  box-shadow: 0 0 15px rgba(8,165,226,0.4);
 }
 
 /* Footer */
@@ -205,6 +372,9 @@ footer{position:relative;z-index:10;background:rgba(0,18,32,0.95);border-top:1px
   .stats{grid-template-columns:repeat(2,1fr);}
   nav{padding:1rem 1.5rem;}
   .hero-btns{flex-direction:column;align-items:center;}
+  .product{flex-direction:column !important;text-align:center;}
+  .product-img img{width:100%;max-width:400px;}
+  .nav-links{display:none;}
 }
 </style>
 </head>
@@ -220,9 +390,15 @@ footer{position:relative;z-index:10;background:rgba(0,18,32,0.95);border-top:1px
 <!-- Nav -->
 <nav id="main-nav">
   <div class="nav-logo">
-    <span class="x">X</span> GYM
+    <span class="x">The</span> Gym
     <small class="nav-power">POWER LEVEL: OVER 9000</small>
   </div>
+  <ul class="nav-links">
+    <li><a href="/Agile-Development-Assignment/testindex.html">Home</a></li>
+    <li><a href="#">Training</a></li>
+    <li><a href="/Agile-Development-Assignment/XGYM_Cart.html">Products</a></li>
+    <li><a href="#">Contact</a></li>
+  </ul>
   <div class="auth-links">
     <a href="#" class="auth-link" id="nav-login-link">Login</a>
     <a href="#" class="auth-link" id="nav-register-link">Register</a>
@@ -239,13 +415,12 @@ footer{position:relative;z-index:10;background:rgba(0,18,32,0.95);border-top:1px
 
   <div class="hero-phase">
     <div class="phase-sep"></div>
-    SUPER SAIYAN PROTOCOL ACTIVATED
     <div class="phase-sep r"></div>
   </div>
 
   <h1 class="hero-title" id="title">
-    <span class="t-x">X</span>
-    <span class="t-gym">GYM</span>
+    <span class="t-x">The</span>
+    <span class="t-gym">Gym</span>
   </h1>
 
   <div class="hero-level">
@@ -257,8 +432,7 @@ footer{position:relative;z-index:10;background:rgba(0,18,32,0.95);border-top:1px
   <p class="hero-sub">Strength. Discipline. Power.<br/><span>Your transformation starts here.</span></p>
 
   <div class="hero-btns">
-    <button class="btn-saiyan" id="cta">BEGIN ASCENSION</button>
-    <button class="btn-ghost">View Training Arcs</button>
+    <button class="btn-ghost">View Training Plans</button>
   </div>
 </section>
 
@@ -295,6 +469,82 @@ footer{position:relative;z-index:10;background:rgba(0,18,32,0.95);border-top:1px
   </p>
 </section>
 
+<!-- Products Section -->
+<section class="products-section">
+
+  <div class="product">
+    <div class="product-img">
+      <img src="https://images.unsplash.com/photo-1571019613454-1cb2f99b2d8b">
+    </div>
+    <div class="product-text">
+      <h3>Strength Programs</h3>
+      <p>Elite strength training programs built for maximum power and muscle growth. Push your limits and break through barriers.</p>
+    </div>
+  </div>
+
+  <div class="product">
+    <div class="product-img">
+      <img src="https://images.unsplash.com/photo-1517836357463-d25dfeac3438">
+    </div>
+    <div class="product-text">
+      <h3>Personal Coaching</h3>
+      <p>Professional trainers guiding your journey to peak performance. One-on-one attention for maximum results.</p>
+    </div>
+  </div>
+
+</section>
+
+<!-- Parallax -->
+<div class="parallax" style="background-image:url('https://images.unsplash.com/photo-1599058917212-d750089bc07e')"></div>
+
+<!-- More Products -->
+<section class="products-section">
+
+  <div class="product">
+    <div class="product-img">
+      <img src="https://images.unsplash.com/photo-1581009146145-b5ef050c2e1e">
+    </div>
+    <div class="product-text">
+      <h3>Nutrition Plans</h3>
+      <p>Fuel your body with elite athlete nutrition strategies. Optimize your diet for maximum performance gains.</p>
+    </div>
+  </div>
+
+  <div class="product">
+    <div class="product-img">
+      <img src="https://images.unsplash.com/photo-1534438327276-14e5300c3a48?q=80&w=1170&auto=format&fit=crop&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D">
+    </div>
+    <div class="product-text">
+      <h3>Premium Equipment</h3>
+      <p>Train with world-class gym equipment designed for serious athletes. State-of-the-art facilities await.</p>
+    </div>
+  </div>
+
+</section>
+
+<!-- Cards Section -->
+<section class="cards-section reveal">
+  <h2>Why Choose <span>The Gym</span></h2>
+  <div class="cards">
+    <div class="card">
+      <h4>24/7 Access</h4>
+      <p>Train whenever you want. No restrictions.</p>
+    </div>
+    <div class="card">
+      <h4>Pro Trainers</h4>
+      <p>Expert fitness coaching from certified professionals.</p>
+    </div>
+    <div class="card">
+      <h4>Modern Equipment</h4>
+      <p>Latest strength machines and training tools.</p>
+    </div>
+    <div class="card">
+      <h4>Community</h4>
+      <p>Train with motivated athletes and warriors.</p>
+    </div>
+  </div>
+</section>
+
 <!-- Ticker -->
 <div class="ticker">
   <div class="ticker-inner">
@@ -313,9 +563,9 @@ footer{position:relative;z-index:10;background:rgba(0,18,32,0.95);border-top:1px
   </div>
 </div>
 
-<!--  -->
-<section>
-  <h1 class="heading" style="text-align: center; padding: 2%"> weekly gym<span>schedule</span></h1>
+<!-- Weekly Schedule -->
+<section class="schedule-section">
+  <h1 class="heading">Weekly Gym <span>Schedule</span></h1>
 
   <div class="table box-container">
     <div class="box">
@@ -331,8 +581,8 @@ footer{position:relative;z-index:10;background:rgba(0,18,32,0.95);border-top:1px
         <p>Core Conditioning</p>
         <p>Flexibility Training</p>
         <p>Endurance Run</p>
-        <p>Treadmill walk</p>
-        <p>Tricep dips</p>
+        <p>Treadmill Walk</p>
+        <p>Tricep Dips</p>
       </div>
     </div>
 
@@ -443,20 +693,16 @@ footer{position:relative;z-index:10;background:rgba(0,18,32,0.95);border-top:1px
         <p>Muscle Release</p>
       </div>
     </div>
-
   </div>
-
 </section>
 
 <!-- Footer -->
 <footer>
-  <div class="footer-logo"><span>X</span> GYM</div>
-  <div class="footer-copy">© 2026 X GYM — EXCEED YOUR LIMITS — ALL RIGHTS RESERVED</div>
+  <div class="footer-logo"><span>The</span> Gym</div>
+  <div class="footer-copy">© 2026 The Gym — EXCEED YOUR LIMITS — ALL RIGHTS RESERVED</div>
 </footer>
 
-<!-- ============================
-     AUTH OVERLAY (Login / Register)
-     ============================ -->
+<!-- Auth Overlay -->
 <div id="auth-overlay" style="
   display:none; position:fixed; inset:0;
   background:rgba(0,13,20,0.85); backdrop-filter:blur(12px);
@@ -511,9 +757,7 @@ footer{position:relative;z-index:10;background:rgba(0,18,32,0.95);border-top:1px
         color:#f1f9fe;font-family:'Exo 2',sans-serif;box-sizing:border-box">
         <option value="client" style="background:#001220">Client</option>
         <option value="trainer" style="background:#001220">Trainer</option>
-        <!-- ADMIN OPTION: Uncomment line below to allow admin registration from the form. Remove when done. -->
         <option value="admin" style="background:#001220">Admin</option>
-        <!-- END ADMIN OPTION -->
       </select>
       <button id="register-btn" style="
         width:100%;padding:14px;border:none;border-radius:8px;
@@ -526,11 +770,9 @@ footer{position:relative;z-index:10;background:rgba(0,18,32,0.95);border-top:1px
       </p>
     </div>
 
-    <!-- Auth error message -->
     <p id="auth-error" style="color:#e96d25;margin-top:12px;font-size:0.9rem;text-align:center"></p>
   </div>
 </div>
-
 
 <!-- Firebase compat SDKs -->
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
@@ -554,7 +796,7 @@ document.addEventListener('mousemove',e=>{
   cursor.style.left=cx+'px';cursor.style.top=cy+'px';
 });
 (function animRing(){rx+=(cx-rx)*.1;ry+=(cy-ry)*.1;ring.style.left=rx+'px';ring.style.top=ry+'px';requestAnimationFrame(animRing);})();
-document.querySelectorAll('button,a,.stat-box').forEach(el=>{
+document.querySelectorAll('button,a,.stat-box,.card,.product-img').forEach(el=>{
   el.addEventListener('mouseenter',()=>{cursor.style.width='24px';cursor.style.height='24px';ring.style.width='60px';ring.style.height='60px';});
   el.addEventListener('mouseleave',()=>{cursor.style.width='16px';cursor.style.height='16px';ring.style.width='40px';ring.style.height='40px';});
 });
@@ -661,13 +903,24 @@ const obs=new IntersectionObserver(es=>es.forEach(e=>{
 }),{threshold:.2});
 document.querySelectorAll('.reveal').forEach(r=>obs.observe(r));
 
+/* Product scroll reveal */
+const products = document.querySelectorAll(".product");
+function revealProducts(){
+  let trigger = window.innerHeight * 0.85;
+  products.forEach(el => {
+    let top = el.getBoundingClientRect().top;
+    if(top < trigger){
+      el.classList.add("show");
+    }
+  });
+}
+window.addEventListener("scroll", revealProducts);
+revealProducts();
+
 /* GSAP */
 gsap.to("#main-nav", { opacity: 1, y: 0, duration: 1.4, ease: "power3.out", delay: 0.2 });
-
 gsap.from(".hero-title", { scale: 0.8, opacity: 0, duration: 0.8, delay: 0.5, ease: "power4.out" });
-
 gsap.from("#cta", { scale: 0.5, opacity: 0, delay: 0.6, duration: 1.2, ease: "elastic.out(1, 0.5)" });
-
 gsap.from(".site-content h2", { scrollTrigger: ".site-content", y: 80, opacity: 0, duration: 1.2, ease: "power3.out" });
 gsap.from(".site-content p", { scrollTrigger: ".site-content", y: 40, opacity: 0, delay: 0.2, duration: 1.2, ease: "power3.out" });
 </script>

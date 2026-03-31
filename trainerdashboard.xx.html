@@ -4,83 +4,124 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Trainer Dashboard</title>
-<!--You can remove the CSS and JS for clarity but would cause clutter issues and multiple files-->
+<link href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Exo+2:wght@200;300;400;600;700;900&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
 <style>
+    :root {
+        --aura: #08a5e2;
+        --aura2: #006af5;
+        --white: #f1f9fe;
+        --black: #000d14;
+        --deep: #001220;
+    }
+
     body {
         margin: 0;
-        background: #030303;
-        font-family: 'Poppins', sans-serif;
+        background: var(--black);
+        font-family: 'Exo 2', sans-serif;
         overflow-x: hidden;
-        color: white;
+        color: var(--white);
+        cursor: none;
     }
 
-    /* Particle System */
-    canvas {
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100vw;
-        height: 100vh;
-        pointer-events: none;
-        z-index: -3;
+    /* Custom cursor */
+    .cursor {
+        position: fixed; width: 16px; height: 16px;
+        background: radial-gradient(circle, #fff 0%, var(--aura) 50%, transparent 100%);
+        border-radius: 50%; pointer-events: none; z-index: 9999;
+        transform: translate(-50%,-50%);
+        box-shadow: 0 0 20px var(--aura), 0 0 40px rgba(8,165,226,0.4);
+        transition: width .15s, height .15s;
+    }
+    .cursor-ring {
+        position: fixed; width: 40px; height: 40px;
+        border: 1px solid rgba(8,165,226,0.3); border-radius: 50%;
+        pointer-events: none; z-index: 9998;
+        transform: translate(-50%,-50%);
+        transition: left .1s, top .1s, width .2s, height .2s;
+        animation: ringPulse 2s infinite;
+    }
+    @keyframes ringPulse{0%,100%{box-shadow:0 0 0 0 rgba(8,165,226,0.4)}50%{box-shadow:0 0 0 8px rgba(8,165,226,0)}}
+
+    canvas#bgCanvas {
+        position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+        z-index: 0; pointer-events: none;
     }
 
-    #p1 { opacity: 0.25; }
-    #p2 { opacity: 0.45; }
-    #p3 { opacity: 0.9; }
+    .aura-layer {
+        position: fixed; top: 50%; left: 50%;
+        transform: translate(-50%,-50%); border-radius: 50%;
+        pointer-events: none; z-index: 1;
+    }
+    .aura-1 {
+        width: 800px; height: 800px;
+        background: radial-gradient(circle, rgba(8,165,226,0.06) 0%, transparent 70%);
+        animation: auraPulse1 3s ease-in-out infinite;
+    }
+    .aura-2 {
+        width: 500px; height: 500px;
+        background: radial-gradient(circle, rgba(0,106,245,0.08) 0%, transparent 60%);
+        animation: auraPulse2 2s ease-in-out infinite;
+    }
+    @keyframes auraPulse1{0%,100%{transform:translate(-50%,-50%) scale(1);opacity:0.8}50%{transform:translate(-50%,-50%) scale(1.15);opacity:1}}
+    @keyframes auraPulse2{0%,100%{transform:translate(-50%,-50%) scale(1);opacity:0.6}50%{transform:translate(-50%,-50%) scale(1.3);opacity:1}}
 
-    /* Fog layer */
-    .fog {
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100vw;
-        height: 100vh;
-        background: radial-gradient(circle at 50% 20%, rgba(255,0,80,0.15), transparent 70%);
-        filter: blur(80px);
-        z-index: -2;
-        animation: fogMove 12s infinite alternate ease-in-out;
+    .lightning-container {
+        position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+        pointer-events: none; z-index: 2; overflow: hidden;
+    }
+    .bolt {
+        position: absolute; width: 2px;
+        background: linear-gradient(to bottom, transparent, var(--aura), transparent);
+        opacity: 0;
+        animation: boltFlash var(--dur,2s) var(--delay,0s) infinite;
+    }
+    @keyframes boltFlash{
+        0%,85%,100%{opacity:0;transform:scaleY(0)}
+        87%{opacity:1;transform:scaleY(1)}
+        89%{opacity:0.3;transform:scaleY(0.8)}
+        91%{opacity:0;transform:scaleY(0)}
     }
 
-    @keyframes fogMove {
-        0% { transform: translateY(-40px); }
-        100% { transform: translateY(40px); }
-    }
-
-    /* Sidebar (static, no sliding) */
+    /* Sidebar */
     .sidebar {
         width: 260px;
         height: 100vh;
-        background: rgba(255,255,255,0.03);
+        background: rgba(0,18,32,0.85);
         backdrop-filter: blur(18px);
-        border-right: 1px solid rgba(255,255,255,0.08);
-        box-shadow: 0 0 40px rgba(255,0,80,0.25);
+        border-right: 1px solid rgba(8,165,226,0.15);
+        box-shadow: 0 0 40px rgba(8,165,226,0.2);
         padding: 40px 25px;
         position: fixed;
-        top: 0;
-        left: 0;
+        top: 0; left: 0;
         opacity: 0;
+        z-index: 10;
     }
 
     .sidebar h2 {
+        font-family: 'Orbitron', monospace;
         font-size: 1.8rem;
         margin-bottom: 40px;
         letter-spacing: 3px;
         text-transform: uppercase;
+        color: var(--aura);
+        text-shadow: 0 0 20px var(--aura);
     }
 
     .nav-item {
         margin: 22px 0;
-        font-size: 1.15rem;
-        opacity: 0.75;
-        cursor: pointer;
+        font-size: 1.05rem;
+        opacity: 0.6;
+        cursor: none;
         transition: 0.3s;
+        letter-spacing: 0.1em;
+        font-weight: 400;
     }
 
     .nav-item:hover {
         opacity: 1;
         transform: translateX(10px);
-        color: #ff4d4d;
+        color: var(--aura);
+        text-shadow: 0 0 10px var(--aura);
     }
 
     /* Main content */
@@ -88,17 +129,22 @@
         margin-left: 260px;
         padding: 50px;
         opacity: 0;
+        position: relative;
+        z-index: 10;
     }
 
     .content h1 {
-        font-size: 3.2rem;
+        font-family: 'Black Han Sans', cursive;
+        font-size: 2.8rem;
         margin-bottom: 10px;
-        letter-spacing: 4px;
+        letter-spacing: 0.06em;
     }
 
     .content p {
-        opacity: 0.75;
+        opacity: 0.5;
         max-width: 700px;
+        letter-spacing: 0.1em;
+        font-weight: 300;
     }
 
     /* Glass cards */
@@ -110,42 +156,61 @@
     }
 
     .card {
-        background: rgba(255,255,255,0.04);
+        background: rgba(0,18,32,0.8);
         padding: 25px;
         border-radius: 14px;
         backdrop-filter: blur(12px);
-        border: 1px solid rgba(255,255,255,0.08);
-        box-shadow: 0 0 25px rgba(255,0,80,0.2);
+        border: 1px solid rgba(8,165,226,0.1);
+        box-shadow: 0 0 25px rgba(8,165,226,0.15);
         transition: 0.3s;
-        cursor: pointer;
+        cursor: none;
+        position: relative;
+        overflow: hidden;
     }
+
+    .card::before {
+        content: '';
+        position: absolute; top: 0; left: 0; right: 0; height: 2px;
+        background: linear-gradient(90deg, var(--aura2), var(--aura), rgba(8,165,226,0));
+        transform: scaleX(0); transform-origin: left;
+        transition: transform 0.4s;
+    }
+    .card:hover::before { transform: scaleX(1); }
 
     .card:hover {
         transform: translateY(-10px);
-        box-shadow: 0 0 35px rgba(255,0,80,0.35);
+        border-color: var(--aura);
+        box-shadow: 0 10px 40px rgba(8,165,226,0.2), 0 0 0 1px rgba(8,165,226,0.15);
     }
 
     .card h3 {
         margin: 0 0 10px;
-        font-size: 1.4rem;
+        font-family: 'Orbitron', monospace;
+        font-size: 1rem;
+        font-weight: 700;
+        letter-spacing: 0.1em;
     }
 
     .card p {
-        opacity: 0.7;
-        font-size: 0.95rem;
+        opacity: 0.45;
+        font-size: 0.9rem;
+        font-weight: 300;
     }
+
+    ::-webkit-scrollbar { width: 8px; }
+    ::-webkit-scrollbar-track { background: rgba(0,18,32,0.5); }
+    ::-webkit-scrollbar-thumb { background: rgba(8,165,226,0.3); border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(8,165,226,0.5); }
 </style>
 </head>
 
 <body>
-
-<!-- Particle layers -->
-<canvas id="p1"></canvas>
-<canvas id="p2"></canvas>
-<canvas id="p3"></canvas>
-
-<!-- Fog -->
-<div class="fog"></div>
+<div class="cursor" id="cursor"></div>
+<div class="cursor-ring" id="cursorRing"></div>
+<canvas id="bgCanvas"></canvas>
+<div class="aura-layer aura-1"></div>
+<div class="aura-layer aura-2"></div>
+<div class="lightning-container" id="lightningContainer"></div>
 
 <!-- Sidebar -->
 <div class="sidebar" id="sidebar">
@@ -158,7 +223,7 @@
     <div class="nav-item" data-panel="panel-meal-planner">Meal Planner</div>
     <div class="nav-item" data-panel="panel-membership">Membership</div>
     <div class="nav-item" data-panel="panel-settings">Settings</div>
-    <div id="logout-btn" class="nav-item" style="margin-top:auto;color:#ff4d4d;cursor:pointer">Logout</div>
+    <div id="logout-btn" class="nav-item" style="margin-top:auto;color:var(--aura);cursor:none">Logout</div>
 </div>
 
 <!-- Main content -->
@@ -184,7 +249,7 @@
     <div id="panel-share-code"      class="xgym-panel" style="display:none;margin-top:40px"></div>
     <div id="panel-cart"            class="xgym-panel" style="display:none;margin-top:40px"></div>
     <div id="panel-settings"        class="xgym-panel" style="display:none;margin-top:40px">
-      <h2 style="color:#ff4d4d">Settings</h2>
+      <h2 style="color:var(--aura)">Settings</h2>
       <p>Profile &amp; preferences coming soon.</p>
     </div>
 </div>
@@ -202,67 +267,73 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
 
 <script>
-/* Particle generator */
-function particleLayer(canvas, count, speed) {
-    const ctx = canvas.getContext("2d");
-    let w, h;
+/* Custom cursor */
+const cursor=document.getElementById('cursor');
+const ring=document.getElementById('cursorRing');
+let rx=0,ry=0,cx=0,cy=0;
+document.addEventListener('mousemove',e=>{
+  cx=e.clientX;cy=e.clientY;
+  cursor.style.left=cx+'px';cursor.style.top=cy+'px';
+});
+(function animRing(){rx+=(cx-rx)*.1;ry+=(cy-ry)*.1;ring.style.left=rx+'px';ring.style.top=ry+'px';requestAnimationFrame(animRing);})();
+document.querySelectorAll('.card,.nav-item,button,a').forEach(el=>{
+  el.addEventListener('mouseenter',()=>{cursor.style.width='24px';cursor.style.height='24px';ring.style.width='60px';ring.style.height='60px';});
+  el.addEventListener('mouseleave',()=>{cursor.style.width='16px';cursor.style.height='16px';ring.style.width='40px';ring.style.height='40px';});
+});
 
-    function resize() {
-        w = canvas.width = window.innerWidth;
-        h = canvas.height = window.innerHeight;
-    }
-    resize();
-    window.addEventListener("resize", resize);
+/* Energy particle canvas */
+const canvas=document.getElementById('bgCanvas');
+const ctx=canvas.getContext('2d');
+function resize(){canvas.width=window.innerWidth;canvas.height=window.innerHeight;}
+resize();window.addEventListener('resize',resize);
 
-    const particles = [];
-    for (let i = 0; i < count; i++) {
-        particles.push({
-            x: Math.random() * w,
-            y: Math.random() * h,
-            size: Math.random() * 2 + 1,
-            vx: (Math.random() - 0.5) * speed,
-            vy: (Math.random() - 0.5) * speed
-        });
-    }
+const particles=Array.from({length:100},()=>({
+  x:Math.random()*canvas.width,y:Math.random()*canvas.height,
+  vx:(Math.random()-.5)*.4,vy:(Math.random()-.5)*.4,
+  r:Math.random()*1.5+.2,
+  col:Math.random()>.3?'rgba(8,165,226,':'rgba(0,106,245,',
+  a:Math.random()*.4+.1
+}));
 
-    function animate() {
-        ctx.clearRect(0, 0, w, h);
-        particles.forEach(p => {
-            p.x += p.vx;
-            p.y += p.vy;
+let mx=canvas.width/2,my=canvas.height/2;
+document.addEventListener('mousemove',e=>{mx=e.clientX;my=e.clientY;});
 
-            if (p.x < 0) p.x = w;
-            if (p.x > w) p.x = 0;
-            if (p.y < 0) p.y = h;
-            if (p.y > h) p.y = 0;
+function draw(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  const g=ctx.createRadialGradient(canvas.width/2,canvas.height*.6,0,canvas.width/2,canvas.height/2,canvas.height);
+  g.addColorStop(0,'rgba(0,60,120,0.12)');g.addColorStop(.5,'rgba(0,30,80,0.06)');g.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle=g;ctx.fillRect(0,0,canvas.width,canvas.height);
 
-            ctx.fillStyle = "rgba(255, 0, 60, 0.8)";
-            ctx.beginPath();
-            ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-            ctx.fill();
-        });
-        requestAnimationFrame(animate);
-    }
-    animate();
+  const mg=ctx.createRadialGradient(mx,my,0,mx,my,220);
+  mg.addColorStop(0,'rgba(8,165,226,0.08)');mg.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle=mg;ctx.fillRect(0,0,canvas.width,canvas.height);
+
+  particles.forEach(p=>{
+    p.x+=p.vx;p.y+=p.vy;
+    if(p.x<0)p.x=canvas.width;if(p.x>canvas.width)p.x=0;
+    if(p.y<0)p.y=canvas.height;if(p.y>canvas.height)p.y=0;
+    ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);
+    ctx.fillStyle=p.col+p.a+')';ctx.fill();
+  });
+  requestAnimationFrame(draw);
+}
+draw();
+
+/* Lightning bolts */
+const lc=document.getElementById('lightningContainer');
+for(let i=0;i<8;i++){
+  const b=document.createElement('div');b.className='bolt';
+  b.style.left=(10+Math.random()*80)+'%';b.style.top=(Math.random()*80)+'%';
+  b.style.height=(40+Math.random()*120)+'px';
+  b.style.setProperty('--dur',(1.5+Math.random()*2)+'s');
+  b.style.setProperty('--delay',(Math.random()*3)+'s');
+  b.style.transform='rotate('+(Math.random()*30-15)+'deg)';
+  lc.appendChild(b);
 }
 
-particleLayer(document.getElementById("p1"), 40, 0.2);
-particleLayer(document.getElementById("p2"), 70, 0.4);
-particleLayer(document.getElementById("p3"), 120, 0.7);
-
 /* GSAP entrance */
-gsap.to("#sidebar", {
-    opacity: 1,
-    duration: 1.4,
-    ease: "power3.out"
-});
-
-gsap.to("#content", {
-    opacity: 1,
-    duration: 1.4,
-    delay: 0.3,
-    ease: "power3.out"
-});
+gsap.to("#sidebar", { opacity: 1, duration: 1.4, ease: "power3.out" });
+gsap.to("#content", { opacity: 1, duration: 1.4, delay: 0.3, ease: "power3.out" });
 </script>
 
 </body>
