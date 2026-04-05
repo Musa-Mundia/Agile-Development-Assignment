@@ -3,187 +3,215 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Admin Dashboard — X-Gym</title>
-<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700;900&display=swap" rel="stylesheet">
+<title>Admin Dashboard — The Gym</title>
+<link href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Exo+2:wght@200;300;400;600;700;900&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
 <style>
-    body {
-        margin: 0;
-        background: #030303;
-        font-family: 'Poppins', sans-serif;
-        overflow-x: hidden;
-        color: white;
-    }
+:root {
+  --aura: #0887e2;
+  --aura2: #006af5;
+  --fire: #e96d25;
+  --gold: #ffd64a;
+  --white: #f1f9fe;
+  --black: #000d14;
+  --deep: #001220;
+  --border: 1px solid rgba(8,165,226,0.15);
+  --bg: rgba(0,18,32,0.9);
+}
 
-    /* Particle System */
-    canvas.particle-layer {
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100vw;
-        height: 100vh;
-        pointer-events: none;
-        z-index: -3;
-    }
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box;}
 
-    #p1 { opacity: 0.25; }
-    #p2 { opacity: 0.45; }
-    #p3 { opacity: 0.9; }
+body {
+    margin: 0;
+    background: var(--black);
+    font-family: 'Exo 2', sans-serif;
+    overflow-x: hidden;
+    color: var(--white);
+}
 
-    /* Fog layer */
-    .fog {
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100vw;
-        height: 100vh;
-        background: radial-gradient(circle at 50% 20%, rgba(255,0,80,0.15), transparent 70%);
-        filter: blur(80px);
-        z-index: -2;
-        animation: fogMove 12s infinite alternate ease-in-out;
-    }
+/* Particle System */
+canvas.particle-layer {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    pointer-events: none;
+    z-index: -3;
+}
 
-    @keyframes fogMove {
-        0% { transform: translateY(-40px); }
-        100% { transform: translateY(40px); }
-    }
+#p1 { opacity: 0.25; }
+#p2 { opacity: 0.45; }
+#p3 { opacity: 0.9; }
 
-    /* Sidebar */
-    .sidebar {
-        width: 270px;
-        height: 100vh;
-        background: rgba(255,255,255,0.03);
-        backdrop-filter: blur(18px);
-        border-right: 1px solid rgba(255,255,255,0.08);
-        box-shadow: 0 0 40px rgba(255,0,80,0.25);
-        padding: 40px 25px;
-        position: fixed;
-        top: 0;
-        left: 0;
-        opacity: 0;
-        display: flex;
-        flex-direction: column;
-    }
+/* Aura glow layer */
+.aura-bg {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: radial-gradient(circle at 50% 20%, rgba(8,165,226,0.1), transparent 70%);
+    filter: blur(80px);
+    z-index: -2;
+    animation: auraDrift 12s infinite alternate ease-in-out;
+}
 
-    .sidebar h2 {
-        font-size: 1.8rem;
-        margin-bottom: 10px;
-        letter-spacing: 3px;
-        text-transform: uppercase;
-        color: #ff4d4d;
-    }
+@keyframes auraDrift {
+    0% { transform: translateY(-40px); }
+    100% { transform: translateY(40px); }
+}
 
-    .sidebar .admin-badge {
-        display: inline-block;
-        padding: 4px 14px;
-        border-radius: 20px;
-        background: rgba(77,166,255,0.2);
-        color: #4da6ff;
-        font-size: 0.75rem;
-        font-weight: 600;
-        letter-spacing: 2px;
-        margin-bottom: 30px;
-    }
+/* Sidebar */
+.sidebar {
+    width: 270px;
+    height: 100vh;
+    background: rgba(0,18,32,0.85);
+    backdrop-filter: blur(18px);
+    border-right: 1px solid rgba(8,165,226,0.15);
+    box-shadow: 0 0 40px rgba(8,165,226,0.2);
+    padding: 40px 25px;
+    position: fixed;
+    top: 0;
+    left: 0;
+    opacity: 0;
+    display: flex;
+    flex-direction: column;
+}
 
-    .nav-item {
-        margin: 18px 0;
-        font-size: 1.05rem;
-        opacity: 0.75;
-        cursor: pointer;
-        transition: 0.3s;
-        display: flex;
-        align-items: center;
-        gap: 10px;
-    }
+.sidebar h2 {
+    font-family: 'Orbitron', monospace;
+    font-size: 1.4rem;
+    margin-bottom: 6px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--aura);
+    text-shadow: 0 0 20px var(--aura), 0 0 40px rgba(8,165,226,0.3);
+}
 
-    .nav-item:hover {
-        opacity: 1;
-        transform: translateX(10px);
-        color: #ff4d4d;
-    }
+.sidebar .admin-badge {
+    display: inline-block;
+    padding: 4px 14px;
+    border-radius: 20px;
+    background: rgba(255,0,0,0.12);
+    color: #ff4444;
+    font-family: 'Orbitron', monospace;
+    font-size: 0.6rem;
+    font-weight: 600;
+    letter-spacing: 0.2em;
+    margin-bottom: 30px;
+}
 
-    .nav-item .nav-icon {
-        font-size: 1.1rem;
-        width: 24px;
-        text-align: center;
-    }
+.nav-item {
+    margin: 18px 0;
+    font-size: 0.95rem;
+    opacity: 0.6;
+    cursor: pointer;
+    transition: 0.3s;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    letter-spacing: 0.04em;
+}
 
-    /* Main content */
-    .content {
-        margin-left: 270px;
-        padding: 40px 50px;
-        opacity: 0;
-    }
+.nav-item:hover {
+    opacity: 1;
+    transform: translateX(10px);
+    color: var(--aura);
+    text-shadow: 0 0 10px var(--aura);
+}
 
-    .content h1 {
-        font-size: 2.6rem;
-        margin-bottom: 8px;
-        letter-spacing: 3px;
-    }
+.nav-item .nav-icon {
+    font-size: 1.1rem;
+    width: 24px;
+    text-align: center;
+}
 
-    .content > p {
-        opacity: 0.65;
-        max-width: 700px;
-        margin-bottom: 10px;
-    }
+/* Main content */
+.content {
+    margin-left: 270px;
+    padding: 40px 50px;
+    opacity: 0;
+}
 
-    /* Glass cards */
-    .grid {
-        margin-top: 40px;
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 22px;
-    }
+.content h1 {
+    font-family: 'Black Han Sans', cursive;
+    font-size: 2.6rem;
+    margin-bottom: 8px;
+    letter-spacing: 0.06em;
+}
 
-    .card {
-        background: rgba(255,255,255,0.04);
-        padding: 24px;
-        border-radius: 14px;
-        backdrop-filter: blur(12px);
-        border: 1px solid rgba(255,255,255,0.08);
-        box-shadow: 0 0 25px rgba(255,0,80,0.2);
-        transition: 0.3s;
-        cursor: pointer;
-    }
+.content > p {
+    opacity: 0.5;
+    max-width: 700px;
+    margin-bottom: 10px;
+    font-weight: 300;
+    letter-spacing: 0.05em;
+}
 
-    .card:hover {
-        transform: translateY(-8px);
-        box-shadow: 0 0 35px rgba(255,0,80,0.35);
-    }
+/* Glass cards */
+.grid {
+    margin-top: 40px;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 22px;
+}
 
-    .card h3 {
-        margin: 0 0 8px;
-        font-size: 1.3rem;
-    }
+.card {
+    background: var(--bg);
+    padding: 24px;
+    border-radius: 14px;
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(8,165,226,0.15);
+    box-shadow: 0 0 25px rgba(8,165,226,0.15);
+    transition: 0.4s;
+    cursor: pointer;
+}
 
-    .card p {
-        opacity: 0.7;
-        font-size: 0.9rem;
-        margin: 0;
-    }
+.card:hover {
+    transform: translateY(-8px) scale(1.02);
+    box-shadow: 0 0 35px rgba(8,165,226,0.35);
+    border-color: var(--aura);
+}
 
-    /* Panels (hidden by default) */
-    .xgym-panel {
-        display: none;
-        margin-top: 40px;
-    }
+.card h3 {
+    font-family: 'Orbitron', monospace;
+    margin: 0 0 8px;
+    font-size: 1rem;
+    letter-spacing: 0.08em;
+    color: var(--aura);
+    text-shadow: 0 0 10px rgba(8,165,226,0.3);
+}
 
-    /* Responsive */
-    @media (max-width: 1100px) {
-        .grid { grid-template-columns: repeat(2, 1fr); }
-    }
+.card p {
+    opacity: 0.6;
+    font-size: 0.9rem;
+    margin: 0;
+    color: rgba(241,249,254,0.6);
+}
 
-    @media (max-width: 768px) {
-        .sidebar { width: 220px; padding: 30px 18px; }
-        .content { margin-left: 220px; padding: 30px 24px; }
-        .grid { grid-template-columns: 1fr; }
-        .content h1 { font-size: 2rem; }
-    }
+/* Panels (hidden by default) */
+.xgym-panel {
+    display: none;
+    margin-top: 40px;
+}
 
-    /* Scrollbar styling */
-    ::-webkit-scrollbar { width: 8px; }
-    ::-webkit-scrollbar-track { background: rgba(255,255,255,0.02); }
-    ::-webkit-scrollbar-thumb { background: rgba(255,0,80,0.3); border-radius: 4px; }
-    ::-webkit-scrollbar-thumb:hover { background: rgba(255,0,80,0.5); }
+/* Responsive */
+@media (max-width: 1100px) {
+    .grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (max-width: 768px) {
+    .sidebar { width: 220px; padding: 30px 18px; }
+    .content { margin-left: 220px; padding: 30px 24px; }
+    .grid { grid-template-columns: 1fr; }
+    .content h1 { font-size: 2rem; }
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar { width: 8px; }
+::-webkit-scrollbar-track { background: rgba(8,165,226,0.02); }
+::-webkit-scrollbar-thumb { background: rgba(8,165,226,0.3); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(8,165,226,0.5); }
 </style>
 </head>
 
@@ -194,38 +222,38 @@
 <canvas id="p2" class="particle-layer"></canvas>
 <canvas id="p3" class="particle-layer"></canvas>
 
-<!-- Fog -->
-<div class="fog"></div>
+<!-- Aura glow -->
+<div class="aura-bg"></div>
 
 <!-- Sidebar -->
 <div class="sidebar" id="sidebar">
-    <h2>X-Gym</h2>
+    <h2>The Gym</h2>
     <span class="admin-badge">ADMIN PANEL</span>
 
     <div class="nav-item" id="nav-dashboard">
-        <span class="nav-icon">⊞</span> Dashboard
+        <span class="nav-icon"></span> Dashboard
     </div>
     <div class="nav-item" data-panel="panel-overview">
-        <span class="nav-icon">📊</span> Overview & Stats
+        <span class="nav-icon"></span> Overview & Stats
     </div>
     <div class="nav-item" data-panel="panel-members">
-        <span class="nav-icon">👥</span> Members
-    </div>
-    <div class="nav-item" data-panel="panel-store">
-        <span class="nav-icon">🏪</span> Store
+        <span class="nav-icon"></span> Members
     </div>
     <div class="nav-item" data-panel="panel-memberships">
-        <span class="nav-icon">🎫</span> Memberships
+        <span class="nav-icon"></span> Memberships
     </div>
-    <div class="nav-item" data-panel="panel-finances">
-        <span class="nav-icon">💰</span> Finances
+    <div class="nav-item" data-panel="panel-admins">
+        <span class="nav-icon"></span> Admins
     </div>
     <div class="nav-item" data-panel="panel-trainer-links">
-        <span class="nav-icon">🔗</span> Trainer–Client Links
+        <span class="nav-icon"></span> Trainer–Client Links
+    </div>
+    <div class="nav-item" data-panel="panel-messenger">
+        <span class="nav-icon">💬</span> Messenger
     </div>
 
     <div style="flex:1"></div>
-    <div id="logout-btn" class="nav-item" style="color:#ff4d4d;cursor:pointer;margin-top:auto">
+    <div id="logout-btn" class="nav-item" style="color:var(--fire);cursor:pointer;margin-top:auto">
         <span class="nav-icon">⎋</span> Logout
     </div>
 </div>
@@ -238,28 +266,28 @@
     <!-- Dashboard Cards Grid -->
     <div class="grid">
         <div class="card" id="card-overview">
-            <h3>📊 Overview & Statistics</h3>
+            <h3> Overview & Statistics</h3>
             <p>Gym progress, revenue charts and member breakdowns.</p>
         </div>
         <div class="card" id="card-members">
-            <h3>👥 Manage Members</h3>
+            <h3> Manage Members</h3>
             <p>View, edit, and remove registered members.</p>
         </div>
         <div class="card" id="card-store-mgmt">
-            <h3>🏪 Store Management</h3>
+            <h3>Store Management</h3>
             <p>Add, update, and remove store items.</p>
         </div>
         <div class="card" id="card-memberships">
-            <h3>🎫 Memberships</h3>
+            <h3>Memberships</h3>
             <p>Create, activate, deactivate memberships.</p>
         </div>
-        <div class="card" id="card-finances">
-            <h3>💰 Finances</h3>
-            <p>Record transactions, view revenue vs expenses.</p>
-        </div>
         <div class="card" id="card-trainer-links">
-            <h3>🔗 Trainer–Client Links</h3>
+            <h3> Trainer–Client Links</h3>
             <p>View and manage trainer-client relationships.</p>
+        </div>
+        <div class="card" id="card-messenger">
+            <h3>💬 Messenger</h3>
+            <p>View all trainers &amp; clients. Monitor messaging activity.</p>
         </div>
     </div>
 
@@ -270,6 +298,7 @@
     <div id="panel-memberships"    class="xgym-panel"></div>
     <div id="panel-finances"       class="xgym-panel"></div>
     <div id="panel-trainer-links"  class="xgym-panel"></div>
+    <div id="panel-messenger"      class="xgym-panel"></div>
 </div>
 
 
@@ -285,7 +314,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
 
 <script>
-/* Particle generator */
+/* Particle generator — blue aura particles matching index.html */
 function particleLayer(canvas, count, speed) {
     const ctx = canvas.getContext("2d");
     let w, h;
@@ -319,7 +348,7 @@ function particleLayer(canvas, count, speed) {
             if (p.y < 0) p.y = h;
             if (p.y > h) p.y = 0;
 
-            ctx.fillStyle = "rgba(255, 0, 60, 0.8)";
+            ctx.fillStyle = "rgba(8, 165, 226, 0.8)";
             ctx.beginPath();
             ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
             ctx.fill();
