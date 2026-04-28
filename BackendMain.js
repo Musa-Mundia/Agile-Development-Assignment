@@ -24,9 +24,15 @@ const auth = firebase.auth();
 const db   = firebase.database();
 
 // Trainer email whitelist — emails here are assigned "trainer" role on registration.
-// All other emails default to "client". Admin accounts are created via Firebase console
-// or by an existing admin editing a user's role in the admin dashboard.
+// All other emails default to "client".
 const TRAINER_EMAILS = ["trainer1@xgym.com", "trainer2@xgym.com"];
+
+// Hardcoded admin accounts — these are NOT stored/fetched from Firebase.
+// To add a new admin, add their email (lowercase) to this map.
+const ADMIN_ACCOUNTS = {
+  "mm@gmail.com":    { name: "MM",  email: "mm@gmail.com",    role: "admin" },
+  "kj123@gmail.com": { name: "kj",  email: "KJ123@gmail.com", role: "admin" }
+};
 
 // ============================================================
 // SECTION 2: UTILITY FUNCTIONS
@@ -321,14 +327,35 @@ function getCurrentUser() {
 }
 
 /**
- * Fetch a user's profile from RTDB.
+ * Check if an email belongs to a hardcoded admin.
+ * @param {string} email
+ * @returns {Object|null} The admin profile object, or null.
+ */
+function getHardcodedAdmin(email) {
+  if (!email) return null;
+  return ADMIN_ACCOUNTS[email.toLowerCase()] || null;
+}
+
+/**
+ * Fetch a user's profile from RTDB, or return the hardcoded admin profile.
  * @param {string} uid
+ * @param {string} [email] — if supplied, checks hardcoded admins first.
  * @returns {Object|null}
  */
-async function getUserProfile(uid) {
+async function getUserProfile(uid, email) {
+  // Check hardcoded admins first (by email)
+  const admin = getHardcodedAdmin(email);
+  if (admin) return { id: uid, ...admin };
+
   const snap = await db.ref("users/" + uid).once("value");
   if (!snap.exists()) return null;
-  return { id: uid, ...snap.val() };
+  const profile = { id: uid, ...snap.val() };
+
+  // Also check if the stored email matches a hardcoded admin
+  const adminByStored = getHardcodedAdmin(profile.email);
+  if (adminByStored) return { id: uid, ...adminByStored };
+
+  return profile;
 }
 
 // ============================================================
@@ -628,16 +655,205 @@ async function createMealPlan(trainerId, clientId, plan) {
 }
 
 // ============================================================
+// SECTION 6B: CLASS BOOKING — DATA FUNCTIONS
+// ============================================================
+
+/**
+ * Create a gym class.
+ */
+async function createClass(trainerId, trainerName, data) {
+  await db.ref("classes").push().set({
+    trainerId,
+    trainerName,
+    name: data.name,
+    day: data.day,
+    time: data.time,
+    capacity: Number(data.capacity) || 20,
+    createdAt: Date.now()
+  });
+}
+
+/**
+ * Fetch all gym classes.
+ */
+async function getClasses() {
+  const DAYS = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
+  const snap = await db.ref("classes").once("value");
+  if (!snap.exists()) return [];
+  const result = [];
+  snap.forEach(child => result.push({ id: child.key, ...child.val() }));
+  result.sort((a, b) => {
+    const di = DAYS.indexOf(a.day) - DAYS.indexOf(b.day);
+    return di !== 0 ? di : (a.time || "").localeCompare(b.time || "");
+  });
+  return result;
+}
+
+/**
+ * Fetch classes owned by a trainer.
+ */
+async function getTrainerClasses(trainerId) {
+  const snap = await db.ref("classes").orderByChild("trainerId").equalTo(trainerId).once("value");
+  if (!snap.exists()) return [];
+  const result = [];
+  snap.forEach(child => result.push({ id: child.key, ...child.val() }));
+  return result;
+}
+
+/**
+ * Admin updates a class.
+ */
+async function updateClass(classId, updates) {
+  await db.ref("classes/" + classId).update(updates);
+}
+
+/**
+ * Delete a class and all its bookings.
+ */
+async function deleteClass(classId) {
+  await db.ref("classes/" + classId).remove();
+  const bSnap = await db.ref("bookings").orderByChild("classId").equalTo(classId).once("value");
+  if (bSnap.exists()) {
+    const deletes = {};
+    bSnap.forEach(child => { deletes["bookings/" + child.key] = null; });
+    await db.ref().update(deletes);
+  }
+}
+
+/**
+ * Count bookings for a class.
+ */
+async function getClassBookingCount(classId) {
+  const snap = await db.ref("bookings").orderByChild("classId").equalTo(classId).once("value");
+  if (!snap.exists()) return 0;
+  let count = 0;
+  snap.forEach(() => count++);
+  return count;
+}
+
+/**
+ * Client books a class. Checks capacity and duplicates.
+ */
+async function bookClass(classId, clientId, clientName) {
+  const classSnap = await db.ref("classes/" + classId).once("value");
+  if (!classSnap.exists()) throw new Error("Class not found.");
+  const cls = classSnap.val();
+  const bSnap = await db.ref("bookings").orderByChild("classId").equalTo(classId).once("value");
+  let count = 0;
+  let alreadyBooked = false;
+  if (bSnap.exists()) {
+    bSnap.forEach(child => {
+      count++;
+      if (child.val().clientId === clientId) alreadyBooked = true;
+    });
+  }
+  if (alreadyBooked) throw new Error("You have already booked this class.");
+  if (count >= (cls.capacity || 20)) throw new Error("Class is full.");
+  await db.ref("bookings").push().set({ classId, clientId, clientName, createdAt: Date.now() });
+}
+
+/**
+ * Fetch bookings for a client, enriched with class data.
+ */
+async function getClientBookings(clientId) {
+  const snap = await db.ref("bookings").orderByChild("clientId").equalTo(clientId).once("value");
+  if (!snap.exists()) return [];
+  const bookings = [];
+  snap.forEach(child => bookings.push({ id: child.key, ...child.val() }));
+  const enriched = await Promise.all(bookings.map(async b => {
+    const cSnap = await db.ref("classes/" + b.classId).once("value");
+    if (cSnap.exists()) {
+      const c = cSnap.val();
+      b.className = c.name;
+      b.day = c.day;
+      b.time = c.time;
+      b.trainerName = c.trainerName;
+    }
+    return b;
+  }));
+  return enriched;
+}
+
+/**
+ * Cancel a booking.
+ */
+async function cancelBooking(bookingId) {
+  await db.ref("bookings/" + bookingId).remove();
+}
+
+// ============================================================
+// SECTION 6C: MEAL PLAN & WORKOUT — EXTRA HELPERS
+// ============================================================
+
+/**
+ * Fetch meal plans assigned to a client (from meal_plans node).
+ */
+async function getMealPlans(clientId) {
+  const snap = await db.ref("meal_plans").orderByChild("clientId").equalTo(clientId).once("value");
+  if (!snap.exists()) return [];
+  const result = [];
+  snap.forEach(child => result.push({ id: child.key, ...child.val() }));
+  result.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  return result;
+}
+
+/**
+ * Fetch meal plans a trainer created for a specific client.
+ */
+async function getTrainerMealPlans(trainerId, clientId) {
+  const snap = await db.ref("meal_plans").orderByChild("trainerId").equalTo(trainerId).once("value");
+  if (!snap.exists()) return [];
+  const result = [];
+  snap.forEach(child => {
+    const val = child.val();
+    if (val.clientId === clientId) result.push({ id: child.key, ...val });
+  });
+  result.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  return result;
+}
+
+/**
+ * Delete a meal plan.
+ */
+async function deleteMealPlan(planId) {
+  await db.ref("meal_plans/" + planId).remove();
+}
+
+/**
+ * Fetch workouts a trainer created for a specific client.
+ */
+async function getTrainerWorkouts(trainerId, clientId) {
+  const snap = await db.ref("workouts").orderByChild("trainerId").equalTo(trainerId).once("value");
+  if (!snap.exists()) return [];
+  const result = [];
+  snap.forEach(child => {
+    const val = child.val();
+    if (val.clientId === clientId) result.push({ id: child.key, ...val });
+  });
+  result.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  return result;
+}
+
+/**
+ * Delete a workout.
+ */
+async function deleteWorkout(workoutId) {
+  await db.ref("workouts/" + workoutId).remove();
+}
+
+// ============================================================
 // SECTION 7: ADMIN PANEL — DATA FUNCTIONS
 // ============================================================
 
 // ---------- Admin Auth Check ----------
 /**
- * Check if a user has admin role.
+ * Check if a user has admin role (hardcoded or from profile).
  * @param {string} uid
+ * @param {string} [email] — optional, enables hardcoded admin check.
  * @returns {boolean}
  */
-async function isAdmin(uid) {
+async function isAdmin(uid, email) {
+  if (email && getHardcodedAdmin(email)) return true;
   const profile = await getUserProfile(uid);
   return profile && profile.role === "admin";
 }
@@ -1290,12 +1506,21 @@ function _initAuthForms() {
         loginBtn.textContent = "Logging in…";
         const cred = await loginUser(emailVal, passwordVal);
         console.log("[X-Gym] Login done, fetching profile…");
-        // Try to get profile for role-based redirect (with retries)
+
+        // Check hardcoded admins first — no Firebase profile needed
+        const hardcodedAdmin = getHardcodedAdmin(cred.user.email || emailVal);
+        if (hardcodedAdmin) {
+          console.log("[X-Gym] Hardcoded admin detected:", cred.user.email);
+          _forceRedirect("AdminDashboard.html");
+          return;
+        }
+
+        // Non-admin: fetch profile from Firebase for role-based redirect
         let target = "DashboardClient.xxx.html";
         let profile = null;
         for (let attempt = 0; attempt < 6; attempt++) {
           try {
-            profile = await getUserProfile(cred.user.uid);
+            profile = await getUserProfile(cred.user.uid, cred.user.email);
             if (profile) break;
           } catch (profileErr) {
             console.warn("[X-Gym] Profile fetch attempt", attempt, profileErr);
@@ -1306,15 +1531,12 @@ function _initAuthForms() {
           console.log("[X-Gym] Profile found, role:", profile.role);
           if (profile.role === "trainer") {
             target = "trainerdashboard.xx.html";
-          } else if (profile.role === "admin") {
-            target = "AdminDashboard.html";
           } else {
             target = "DashboardClient.xxx.html";
           }
         } else {
           console.error("[X-Gym] Could not fetch profile after retries! uid:", cred.user.uid);
-          // Profile doesn't exist — likely the RTDB write failed during registration.
-          // Try to create a basic profile NOW so the user isn't stuck.
+          // Profile truly missing — create a default client profile
           try {
             await db.ref("users/" + cred.user.uid).set({
               name: cred.user.email,
@@ -1393,6 +1615,15 @@ async function initClientPage() {
     // DEV/TEST MODE: skip redirect so pages can be opened directly
     console.warn("[X-Gym] Client page: no user logged in — skipping redirect (test mode)");
     initPanelNav();
+    _bindCardToPanel("card-cart",       "panel-cart");
+    _bindCardToPanel("card-workouts",   "panel-workouts");
+    _bindCardToPanel("card-membership", "panel-membership");
+    _bindCardToPanel("card-progress",   "panel-progress");
+    _bindCardToPanel("card-store",      "panel-trainers");
+    _bindCardToPanel("card-booking",     "panel-booking");
+    _bindCardToPanel("card-pick-trainer","panel-pick-trainer");
+    _bindCardToPanel("card-settings",   "panel-settings");
+    _bindCardToPanel("card-messenger",   "panel-messenger");
     return;
   }
 
@@ -1401,7 +1632,7 @@ async function initClientPage() {
   let profile = null;
   for (let attempt = 0; attempt < 6; attempt++) {
     try {
-      profile = await getUserProfile(user.uid);
+      profile = await getUserProfile(user.uid, user.email);
       if (profile) break;
     } catch (e) { console.warn("[X-Gym] Profile fetch attempt", attempt, e); }
     await new Promise(r => setTimeout(r, 800));
@@ -1410,6 +1641,15 @@ async function initClientPage() {
   if (!profile) {
     console.warn("[X-Gym] Client page: no profile found — staying on page (test mode)");
     initPanelNav();
+    _bindCardToPanel("card-cart",       "panel-cart");
+    _bindCardToPanel("card-workouts",   "panel-workouts");
+    _bindCardToPanel("card-membership", "panel-membership");
+    _bindCardToPanel("card-progress",   "panel-progress");
+    _bindCardToPanel("card-store",      "panel-trainers");
+    _bindCardToPanel("card-booking",     "panel-booking");
+    _bindCardToPanel("card-pick-trainer","panel-pick-trainer");
+    _bindCardToPanel("card-settings",   "panel-settings");
+    _bindCardToPanel("card-messenger",   "panel-messenger");
     return;
   }
   if (profile.role !== "client") {
@@ -1457,7 +1697,7 @@ async function initClientPage() {
     _loadClientMealsPanel(user.uid);
     _loadClientMembershipPanel(user.uid);
     _loadCartPanel();
-    _loadClientBookingPlaceholder();
+    _loadClientBookingPanel(user.uid, profile.name);
     _loadPickTrainerPanel(user.uid);
     _loadClientMessengerPanel(user.uid, profile.name);
   }
@@ -1538,6 +1778,7 @@ async function _loadClientWorkoutsPanel(clientId) {
   const panel = document.getElementById("panel-workouts");
   if (!panel) return;
 
+  const DAYS = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
   let weeklyStats = { workoutsThisWeek: 0, streak: 0, totalVolume: 0, totalSessions: 0 };
   try { weeklyStats = await getWeeklyStats(clientId); } catch(e) {}
 
@@ -1548,6 +1789,34 @@ async function _loadClientWorkoutsPanel(clientId) {
     if (notes.length > 0) latestNote = notes[0];
   } catch(e) {}
 
+  // Compute previous week stats for progress summary
+  let prevWeekVolume = 0, prevWeekCount = 0;
+  try {
+    const allSessions = await getWorkoutSessions(clientId);
+    const now = Date.now();
+    const oneWeekAgo = now - 7 * 24 * 60 * 60 * 1000;
+    const twoWeeksAgo = now - 14 * 24 * 60 * 60 * 1000;
+    for (const s of allSessions) {
+      const t = s.completedAt || 0;
+      if (t >= twoWeeksAgo && t < oneWeekAgo) {
+        prevWeekCount++;
+        for (const ex of (s.exercises || [])) {
+          prevWeekVolume += (ex.sets || 0) * (ex.reps || 0) * (ex.weight || 0);
+        }
+      }
+    }
+  } catch(e) {}
+
+  const volDiff = weeklyStats.totalVolume - prevWeekVolume;
+  const countDiff = weeklyStats.workoutsThisWeek - prevWeekCount;
+  const volPct = prevWeekVolume > 0 ? Math.round((volDiff / prevWeekVolume) * 100) : 0;
+  let progressMsg = "";
+  if (volDiff > 0) progressMsg += `Volume up ${volPct}% from last week. `;
+  else if (volDiff < 0) progressMsg += `Volume down ${Math.abs(volPct)}% from last week. `;
+  if (countDiff > 0) progressMsg += `${countDiff} more workout${countDiff > 1 ? "s" : ""} than last week.`;
+  else if (countDiff < 0) progressMsg += `${Math.abs(countDiff)} fewer workout${Math.abs(countDiff) > 1 ? "s" : ""} than last week.`;
+  if (!progressMsg) progressMsg = "Keep training to build your streak!";
+
   panel.innerHTML = `
     <h2 style="color:#0887e2;font-family:'Orbitron',monospace;letter-spacing:0.1em">
       <span style="color:#e96d25">LIFT</span>Streak Tracker
@@ -1556,29 +1825,30 @@ async function _loadClientWorkoutsPanel(clientId) {
     <!-- Weekly Stats -->
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:20px 0">
       <div class="card" style="text-align:center;padding:18px">
-        <div style="font-size:1.3rem;margin-bottom:6px">&#x1F525;</div>
         <div style="font-size:0.65rem;opacity:0.5;text-transform:uppercase;letter-spacing:0.1em">This Week</div>
         <div style="font-size:1.8rem;font-weight:700;color:#e96d25">${weeklyStats.workoutsThisWeek}</div>
         <div style="font-size:0.7rem;opacity:0.5">workouts done</div>
       </div>
       <div class="card" style="text-align:center;padding:18px">
-        <div style="font-size:1.3rem;margin-bottom:6px">&#x1F4C5;</div>
         <div style="font-size:0.65rem;opacity:0.5;text-transform:uppercase;letter-spacing:0.1em">Streak</div>
         <div style="font-size:1.8rem;font-weight:700;color:#0887e2">${weeklyStats.streak}</div>
         <div style="font-size:0.7rem;opacity:0.5">days in a row</div>
       </div>
       <div class="card" style="text-align:center;padding:18px">
-        <div style="font-size:1.3rem;margin-bottom:6px">&#x26A1;</div>
         <div style="font-size:0.65rem;opacity:0.5;text-transform:uppercase;letter-spacing:0.1em">Volume</div>
         <div style="font-size:1.8rem;font-weight:700;color:#ffd64a">${weeklyStats.totalVolume >= 1000 ? Math.round(weeklyStats.totalVolume / 1000) + "k" : weeklyStats.totalVolume}</div>
         <div style="font-size:0.7rem;opacity:0.5">lbs this week</div>
       </div>
       <div class="card" style="text-align:center;padding:18px">
-        <div style="font-size:1.3rem;margin-bottom:6px">&#x1F3AF;</div>
         <div style="font-size:0.65rem;opacity:0.5;text-transform:uppercase;letter-spacing:0.1em">Total</div>
         <div style="font-size:1.8rem;font-weight:700;color:#00c850">${weeklyStats.totalSessions}</div>
         <div style="font-size:0.7rem;opacity:0.5">all-time sessions</div>
       </div>
+    </div>
+
+    <!-- Progress Summary -->
+    <div class="card" style="margin-bottom:16px;border-left:3px solid #0887e2;padding:12px 16px;font-size:0.85rem;color:rgba(255,255,255,0.75)">
+      <span style="font-weight:600;color:#0887e2">Weekly Progress:</span> ${progressMsg}
     </div>
 
     ${latestNote ? `
@@ -1627,6 +1897,17 @@ async function _loadClientWorkoutsPanel(clientId) {
 
     <!-- Session History -->
     <h3 style="color:#0887e2;margin:24px 0 12px">Session History</h3>
+    <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap">
+      <input id="sh-search" type="text" placeholder="Search by name..."
+        style="padding:8px 14px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
+        background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif;font-size:0.82rem;flex:1;min-width:150px">
+      <button class="sh-range-btn" data-range="7" style="padding:6px 14px;border:none;border-radius:20px;
+        background:#0887e2;color:#fff;cursor:pointer;font-family:Poppins,sans-serif;font-size:0.78rem">7 days</button>
+      <button class="sh-range-btn" data-range="30" style="padding:6px 14px;border:none;border-radius:20px;
+        background:rgba(255,255,255,0.08);color:rgba(255,255,255,0.6);cursor:pointer;font-family:Poppins,sans-serif;font-size:0.78rem">30 days</button>
+      <button class="sh-range-btn" data-range="0" style="padding:6px 14px;border:none;border-radius:20px;
+        background:rgba(255,255,255,0.08);color:rgba(255,255,255,0.6);cursor:pointer;font-family:Poppins,sans-serif;font-size:0.78rem">All</button>
+    </div>
     <div id="session-history-list"></div>
   `;
 
@@ -1678,13 +1959,13 @@ async function _loadClientWorkoutsPanel(clientId) {
     try {
       await logWorkoutSession(clientId, { name, exercises, duration, notes });
       showToast("Workout session logged!", "success");
-      _loadClientWorkoutsPanel(clientId); // Refresh
+      _loadClientWorkoutsPanel(clientId);
     } catch (e) {
       showToast(e.message, "error");
     }
   });
 
-  // Load assigned workouts
+  // Load assigned workouts grouped by day
   try {
     const workouts = await getClientWorkouts(clientId);
     const assignedList = document.getElementById("assigned-workouts-list");
@@ -1692,60 +1973,107 @@ async function _loadClientWorkoutsPanel(clientId) {
       if (workouts.length === 0) {
         assignedList.innerHTML = "<p style='opacity:0.5'>No workout plans assigned yet.</p>";
       } else {
-        assignedList.innerHTML = workouts.map(w => {
-          const exHtml = (w.exercises || []).map(ex =>
-            `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;
-                  border-bottom:1px solid rgba(255,255,255,0.04)">
-              <div style="display:flex;align-items:center;gap:8px">
-                <span style="width:6px;height:6px;border-radius:50%;background:#e96d25;flex-shrink:0"></span>
-                <span>${ex.name}</span>
-              </div>
-              <span style="opacity:0.6;font-size:0.85rem">${ex.sets}\u00D7${ex.reps}${ex.notes ? " (" + ex.notes + ")" : ""}</span>
-            </div>`
-          ).join("");
-          return `
-            <div class="card" style="margin-bottom:14px">
-              <h3>${w.day || "Workout"}</h3>
+        const byDay = {};
+        for (const w of workouts) {
+          const d = w.day || "Unscheduled";
+          if (!byDay[d]) byDay[d] = [];
+          byDay[d].push(w);
+        }
+        let html = "";
+        for (const day of [...DAYS, "Unscheduled"]) {
+          if (!byDay[day]) continue;
+          html += `<h4 style="color:#e96d25;margin:14px 0 8px;font-family:Orbitron,sans-serif;
+            font-size:0.82rem;letter-spacing:1px">${day}</h4>`;
+          for (const w of byDay[day]) {
+            const catBadge = w.category ? `<span style="display:inline-block;padding:2px 10px;border-radius:12px;
+              background:rgba(8,135,226,0.15);color:#0887e2;font-size:0.72rem;font-weight:600;margin-left:8px">${w.category}</span>` : "";
+            const exHtml = (w.exercises || []).map(ex =>
+              `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;
+                    border-bottom:1px solid rgba(255,255,255,0.04)">
+                <div style="display:flex;align-items:center;gap:8px">
+                  <span style="width:6px;height:6px;border-radius:50%;background:#e96d25;flex-shrink:0"></span>
+                  <span>${ex.name}</span>
+                </div>
+                <span style="opacity:0.6;font-size:0.85rem">${ex.sets}\u00D7${ex.reps}${ex.weight ? " @ " + ex.weight + "lb" : ""}${ex.notes ? " (" + ex.notes + ")" : ""}</span>
+              </div>`
+            ).join("");
+            html += `<div class="card" style="margin-bottom:10px">
+              <div style="display:flex;align-items:center">${w.day || "Workout"}${catBadge}</div>
               <div style="margin-top:8px">${exHtml || "<p style='opacity:0.5'>No exercises listed.</p>"}</div>
               <p style="font-size:0.75rem;opacity:0.4;margin-top:8px">${formatDate(w.createdAt)}</p>
             </div>`;
-        }).join("");
+          }
+        }
+        assignedList.innerHTML = html;
       }
     }
   } catch (e) {
     console.warn("Error loading assigned workouts:", e);
   }
 
-  // Load session history
-  try {
-    const sessions = await getWorkoutSessions(clientId);
+  // Load session history with filtering
+  let allSessions = [];
+  try { allSessions = await getWorkoutSessions(clientId); } catch(e) {}
+
+  let currentRange = 7;
+  let currentSearch = "";
+
+  function renderFilteredHistory() {
     const historyList = document.getElementById("session-history-list");
-    if (historyList) {
-      if (sessions.length === 0) {
-        historyList.innerHTML = "<p style='opacity:0.5'>No sessions logged yet. Log your first workout above!</p>";
-      } else {
-        historyList.innerHTML = sessions.slice(0, 20).map(s => {
-          const exTags = (s.exercises || []).map(ex =>
-            `<span style="display:inline-block;padding:3px 10px;border-radius:8px;margin:2px;
-              font-size:0.75rem;background:rgba(233,109,37,0.12);color:#e96d25;
-              border:1px solid rgba(233,109,37,0.2)">${ex.name} ${ex.sets}\u00D7${ex.reps} @ ${ex.weight}lb</span>`
-          ).join("");
-          return `
-            <div class="card" style="margin-bottom:12px">
-              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-                <strong style="color:#0887e2">${s.name}</strong>
-                <span style="opacity:0.5;font-size:0.8rem">${formatDate(s.completedAt)}</span>
-              </div>
-              <div style="margin-bottom:6px">${exTags}</div>
-              ${s.duration ? `<div style="opacity:0.4;font-size:0.8rem">~${s.duration} min</div>` : ""}
-              ${s.notes ? `<div style="opacity:0.5;font-size:0.8rem;margin-top:4px;font-style:italic">${s.notes}</div>` : ""}
-            </div>`;
-        }).join("");
-      }
+    if (!historyList) return;
+    let filtered = allSessions;
+    if (currentRange > 0) {
+      const cutoff = Date.now() - currentRange * 24 * 60 * 60 * 1000;
+      filtered = filtered.filter(s => (s.completedAt || 0) >= cutoff);
     }
-  } catch (e) {
-    console.warn("Error loading session history:", e);
+    if (currentSearch) {
+      const q = currentSearch.toLowerCase();
+      filtered = filtered.filter(s => (s.name || "").toLowerCase().includes(q));
+    }
+    if (filtered.length === 0) {
+      historyList.innerHTML = "<p style='opacity:0.5'>No sessions found for this filter.</p>";
+      return;
+    }
+    historyList.innerHTML = filtered.slice(0, 30).map(s => {
+      const exTags = (s.exercises || []).map(ex =>
+        `<span style="display:inline-block;padding:3px 10px;border-radius:8px;margin:2px;
+          font-size:0.75rem;background:rgba(233,109,37,0.12);color:#e96d25;
+          border:1px solid rgba(233,109,37,0.2)">${ex.name} ${ex.sets}\u00D7${ex.reps}${ex.weight ? " @ " + ex.weight + "lb" : ""}</span>`
+      ).join("");
+      return `
+        <div class="card" style="margin-bottom:12px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <strong style="color:#0887e2">${s.name}</strong>
+            <span style="opacity:0.5;font-size:0.8rem">${formatDate(s.completedAt)}</span>
+          </div>
+          <div style="margin-bottom:6px">${exTags}</div>
+          ${s.duration ? `<div style="opacity:0.4;font-size:0.8rem">~${s.duration} min</div>` : ""}
+          ${s.notes ? `<div style="opacity:0.5;font-size:0.8rem;margin-top:4px;font-style:italic">${s.notes}</div>` : ""}
+        </div>`;
+    }).join("");
   }
+
+  // Search filter
+  document.getElementById("sh-search").addEventListener("input", (e) => {
+    currentSearch = e.target.value.trim();
+    renderFilteredHistory();
+  });
+
+  // Range filter buttons
+  panel.querySelectorAll(".sh-range-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      panel.querySelectorAll(".sh-range-btn").forEach(b => {
+        b.style.background = "rgba(255,255,255,0.08)";
+        b.style.color = "rgba(255,255,255,0.6)";
+      });
+      btn.style.background = "#0887e2";
+      btn.style.color = "#fff";
+      currentRange = parseInt(btn.dataset.range) || 0;
+      renderFilteredHistory();
+    });
+  });
+
+  renderFilteredHistory();
 }
 
 async function _loadClientProgressPanel(clientId, shareCode) {
@@ -1827,8 +2155,83 @@ async function _loadClientMealsPanel(clientId) {
   const panel = document.getElementById("panel-meals");
   if (!panel) return;
 
+  const DAYS = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
+  let mealPlans = [];
+  try { mealPlans = await getMealPlans(clientId); } catch(e) {}
+
+  // Group plans by day
+  const plansByDay = {};
+  for (const p of mealPlans) {
+    const d = p.day || "Unscheduled";
+    if (!plansByDay[d]) plansByDay[d] = [];
+    plansByDay[d].push(p);
+  }
+
+  // Build day tabs and content
+  const activeDays = DAYS.filter(d => plansByDay[d]);
+  let dayTabs = "";
+  let dayPanels = "";
+  for (let i = 0; i < activeDays.length; i++) {
+    const d = activeDays[i];
+    const plans = plansByDay[d];
+    const active = i === 0;
+    dayTabs += `<button class="mp-day-tab" data-day="${d}"
+      style="padding:8px 18px;border:none;border-radius:20px;cursor:pointer;font-family:Poppins,sans-serif;
+      font-size:0.82rem;margin-right:6px;transition:all 0.2s;
+      ${active ? "background:#0887e2;color:#fff" : "background:rgba(255,255,255,0.08);color:rgba(255,255,255,0.6)"}">${d}</button>`;
+
+    let totalCal = 0, totalP = 0, totalC = 0, totalF = 0;
+    let mealRows = "";
+    for (const plan of plans) {
+      const meals = plan.meals || [];
+      for (const m of meals) {
+        totalCal += m.calories || 0;
+        totalP += m.protein || 0;
+        totalC += m.carbs || 0;
+        totalF += m.fats || 0;
+        mealRows += `
+          <div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr 1fr 1fr;gap:8px;padding:8px 0;
+            border-bottom:1px solid rgba(255,255,255,0.05);font-size:0.85rem;align-items:center">
+            <span style="font-weight:600">${m.name || "—"}</span>
+            <span style="opacity:0.6">${m.time || "—"}</span>
+            <span>${m.calories || 0} cal</span>
+            <span>${m.protein || 0}g P</span>
+            <span>${m.carbs || 0}g C</span>
+            <span>${m.fats || 0}g F</span>
+          </div>`;
+      }
+    }
+    dayPanels += `
+      <div class="mp-day-content" data-day="${d}" style="display:${active ? "block" : "none"}">
+        ${mealRows || '<p style="opacity:0.5;padding:10px">No meals for this day.</p>'}
+        <div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr 1fr 1fr;gap:8px;padding:10px 0;
+          margin-top:8px;border-top:2px solid rgba(8,135,226,0.3);font-size:0.85rem;font-weight:700;color:#0887e2">
+          <span>Daily Totals</span>
+          <span></span>
+          <span>${totalCal} cal</span>
+          <span>${totalP}g P</span>
+          <span>${totalC}g C</span>
+          <span>${totalF}g F</span>
+        </div>
+      </div>`;
+  }
+
+  const hasPlans = activeDays.length > 0;
+  const trainerPlanSection = hasPlans ? `
+    <div class="card" style="margin-bottom:20px">
+      <h3 style="margin-bottom:14px">Trainer-Assigned Meal Plans</h3>
+      <div id="mp-day-tabs" style="margin-bottom:16px;display:flex;flex-wrap:wrap;gap:4px">
+        ${dayTabs}
+      </div>
+      <div id="mp-day-panels">${dayPanels}</div>
+    </div>` : `
+    <div class="card" style="margin-bottom:20px;text-align:center;opacity:0.5;padding:20px">
+      <p>No trainer meal plans assigned yet. Ask your trainer to create a plan for you.</p>
+    </div>`;
+
   panel.innerHTML = `
     <h2 style="color:#0887e2">Meal / Food Intake Tracker</h2>
+    ${trainerPlanSection}
     <div class="card" style="margin-bottom:20px">
       <h3>Log Meal</h3>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
@@ -1857,6 +2260,21 @@ async function _loadClientMealsPanel(clientId) {
     </div>
     <div id="meal-list"></div>
   `;
+
+  // Day tab switching
+  panel.querySelectorAll(".mp-day-tab").forEach(tab => {
+    tab.addEventListener("click", () => {
+      panel.querySelectorAll(".mp-day-tab").forEach(t => {
+        t.style.background = "rgba(255,255,255,0.08)";
+        t.style.color = "rgba(255,255,255,0.6)";
+      });
+      tab.style.background = "#0887e2";
+      tab.style.color = "#fff";
+      panel.querySelectorAll(".mp-day-content").forEach(c => c.style.display = "none");
+      const target = panel.querySelector(`.mp-day-content[data-day="${tab.dataset.day}"]`);
+      if (target) target.style.display = "block";
+    });
+  });
 
   document.getElementById("log-meal-btn").addEventListener("click", async () => {
     try {
@@ -1969,17 +2387,147 @@ function _loadCartPanel() {
 }
 
 // --------------------------------------------------------
-// Placeholder panels (scaffolding for future features)
+// Client Booking Panel (full implementation)
 // --------------------------------------------------------
-function _loadClientBookingPlaceholder() {
+async function _loadClientBookingPanel(clientId, clientName) {
   const panel = document.getElementById("panel-booking");
   if (!panel) return;
+
+  panel.innerHTML = `<h2 style="color:#0887e2">Book Classes</h2>
+    <div style="text-align:center;padding:30px;opacity:0.5">Loading classes...</div>`;
+
+  const DAYS = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
+  let classes, bookings;
+  try {
+    [classes, bookings] = await Promise.all([getClasses(), getClientBookings(clientId)]);
+  } catch (e) {
+    panel.innerHTML += `<p style="color:#ff0033">${e.message}</p>`;
+    return;
+  }
+
+  const bookedClassIds = new Set(bookings.map(b => b.classId));
+  const counts = {};
+  for (const c of classes) {
+    counts[c.id] = await getClassBookingCount(c.id);
+  }
+
+  // Weekly schedule rows
+  let scheduleRows = "";
+  for (const day of DAYS) {
+    const dayClasses = classes.filter(c => c.day === day);
+    if (dayClasses.length === 0) continue;
+    scheduleRows += `<tr><td colspan="5" style="background:rgba(8,135,226,0.1);color:#0887e2;font-weight:700;
+      padding:10px 14px;font-family:Orbitron,sans-serif;font-size:0.85rem;letter-spacing:1px">${day}</td></tr>`;
+    for (const c of dayClasses) {
+      const booked = counts[c.id] || 0;
+      const full = booked >= (c.capacity || 20);
+      const isBooked = bookedClassIds.has(c.id);
+      let actionBtn;
+      if (isBooked) {
+        actionBtn = `<span style="display:inline-block;padding:5px 14px;border-radius:20px;
+          background:rgba(8,135,226,0.2);color:#0887e2;font-size:0.8rem;font-weight:600">Booked</span>`;
+      } else if (full) {
+        actionBtn = `<span style="display:inline-block;padding:5px 14px;border-radius:20px;
+          background:rgba(255,0,51,0.15);color:#ff0033;font-size:0.8rem;font-weight:600">Full</span>`;
+      } else {
+        actionBtn = `<button class="cb-book-btn" data-id="${c.id}"
+          style="padding:6px 18px;border:none;border-radius:6px;
+          background:linear-gradient(90deg,#0887e2,#06c);color:#fff;cursor:pointer;
+          font-family:Poppins,sans-serif;font-size:0.8rem;font-weight:600">Book</button>`;
+      }
+      scheduleRows += `
+        <tr style="border-bottom:1px solid rgba(255,255,255,0.05)">
+          <td style="padding:10px 14px">${c.name}</td>
+          <td style="padding:10px 14px">${c.time}</td>
+          <td style="padding:10px 14px">${c.trainerName || "—"}</td>
+          <td style="padding:10px 14px"><span style="color:${full ? "#ff0033" : "#0f0"}">${booked}/${c.capacity || 20}</span></td>
+          <td style="padding:10px 14px">${actionBtn}</td>
+        </tr>`;
+    }
+  }
+  if (!scheduleRows) {
+    scheduleRows = `<tr><td colspan="5" style="text-align:center;padding:30px;opacity:0.5">No classes available yet. Check back soon!</td></tr>`;
+  }
+
+  // My bookings list
+  let bookingCards = "";
+  if (bookings.length > 0) {
+    for (const b of bookings) {
+      bookingCards += `
+        <div class="card" style="margin-bottom:10px;display:flex;justify-content:space-between;align-items:center">
+          <div>
+            <strong>${b.className || "Class"}</strong>
+            <span style="opacity:0.5;margin:0 10px">|</span>
+            <span>${b.day || "—"}</span>
+            <span style="opacity:0.5;margin:0 6px">@</span>
+            <span>${b.time || "—"}</span>
+            <span style="opacity:0.5;margin:0 6px">with</span>
+            <span style="color:#0887e2">${b.trainerName || "—"}</span>
+          </div>
+          <button class="cb-cancel-btn" data-id="${b.id}"
+            style="padding:6px 14px;border:none;border-radius:6px;
+            background:linear-gradient(90deg,#ff0033,#ff5500);color:#fff;cursor:pointer;
+            font-family:Poppins,sans-serif;font-size:0.78rem">Cancel</button>
+        </div>`;
+    }
+  } else {
+    bookingCards = `<p style="opacity:0.5;text-align:center;padding:20px">You haven't booked any classes yet.</p>`;
+  }
+
   panel.innerHTML = `
     <h2 style="color:#0887e2">Book Classes</h2>
+
+    <div class="card" style="margin-bottom:24px">
+      <h3 style="margin-bottom:14px">Weekly Schedule</h3>
+      <div style="overflow-x:auto">
+        <table style="width:100%;border-collapse:collapse;font-size:0.9rem">
+          <thead>
+            <tr style="border-bottom:2px solid rgba(8,135,226,0.3)">
+              <th style="text-align:left;padding:10px 14px;color:#0887e2">Class</th>
+              <th style="text-align:left;padding:10px 14px;color:#0887e2">Time</th>
+              <th style="text-align:left;padding:10px 14px;color:#0887e2">Trainer</th>
+              <th style="text-align:left;padding:10px 14px;color:#0887e2">Spots</th>
+              <th style="text-align:left;padding:10px 14px;color:#0887e2">Action</th>
+            </tr>
+          </thead>
+          <tbody>${scheduleRows}</tbody>
+        </table>
+      </div>
+    </div>
+
     <div class="card">
-      <h3>Coming Soon</h3>
-      <p>Browse available gym classes, view schedules, and book your spot. Classes are created by trainers and include details like day, time, and capacity.</p>
-    </div>`;
+      <h3 style="margin-bottom:14px">My Bookings</h3>
+      ${bookingCards}
+    </div>
+  `;
+
+  // Book buttons
+  panel.querySelectorAll(".cb-book-btn").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      try {
+        await bookClass(btn.dataset.id, clientId, clientName);
+        showToast("Class booked!", "success");
+        _loadClientBookingPanel(clientId, clientName);
+      } catch (e) {
+        showToast(e.message, "error");
+      }
+    });
+  });
+
+  // Cancel buttons
+  panel.querySelectorAll(".cb-cancel-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      showModal("Cancel Booking", "<p>Are you sure you want to cancel this booking?</p>", async () => {
+        try {
+          await cancelBooking(btn.dataset.id);
+          showToast("Booking cancelled.", "success");
+          _loadClientBookingPanel(clientId, clientName);
+        } catch (e) {
+          showToast(e.message, "error");
+        }
+      });
+    });
+  });
 }
 
 function _loadClientPickTrainerPlaceholder() {
@@ -2323,15 +2871,105 @@ async function _loadPickTrainerPanel(clientId) {
   renderTrainerCards(applyFilters());
 }
 
-function _loadTrainerClassesPlaceholder() {
+async function _loadTrainerClassesPanel(trainerUid, trainerName) {
   const panel = document.getElementById("panel-classes");
   if (!panel) return;
+
+  const DAYS = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
+  const dayOpts = DAYS.map(d => `<option value="${d}">${d}</option>`).join("");
+
+  const classes = await getTrainerClasses(trainerUid);
+  const counts = {};
+  for (const c of classes) {
+    counts[c.id] = await getClassBookingCount(c.id);
+  }
+
+  // Group by day
+  let classCards = "";
+  for (const day of DAYS) {
+    const dayClasses = classes.filter(c => c.day === day);
+    if (dayClasses.length === 0) continue;
+    classCards += `<h3 style="color:#0887e2;margin:18px 0 8px;font-family:Orbitron,sans-serif;font-size:0.9rem;
+      letter-spacing:1px">${day}</h3>`;
+    for (const c of dayClasses) {
+      const booked = counts[c.id] || 0;
+      const full = booked >= (c.capacity || 20);
+      classCards += `
+        <div class="card" style="margin-bottom:12px;display:flex;justify-content:space-between;align-items:center">
+          <div>
+            <strong style="font-size:1.05rem">${c.name}</strong>
+            <span style="opacity:0.5;margin-left:10px">${c.time}</span>
+            <div style="margin-top:4px;font-size:0.85rem;opacity:0.7">
+              Booked: <span style="color:${full ? "#ff0033" : "#0f0"}">${booked}/${c.capacity || 20}</span>
+            </div>
+          </div>
+          <button class="tc-del-btn" data-id="${c.id}" data-name="${c.name}"
+            style="padding:6px 14px;border:none;border-radius:6px;
+            background:linear-gradient(90deg,#ff0033,#ff5500);color:#fff;cursor:pointer;
+            font-family:Poppins,sans-serif;font-size:0.78rem">Delete</button>
+        </div>`;
+    }
+  }
+  if (!classCards) {
+    classCards = `<div class="card" style="text-align:center;opacity:0.5;padding:30px">You haven't created any classes yet.</div>`;
+  }
+
   panel.innerHTML = `
     <h2 style="color:#0887e2">My Classes</h2>
-    <div class="card">
-      <h3>Coming Soon</h3>
-      <p>Create and manage your gym classes here. Set the class name, day, time, and capacity. Clients will be able to discover and book your classes from their dashboard.</p>
-    </div>`;
+
+    <div class="card" style="margin-bottom:24px">
+      <h3 style="margin-bottom:14px">Create New Class</h3>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <input id="tc-name" type="text" placeholder="Class Name"
+          style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
+          background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+        <select id="tc-day"
+          style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
+          background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+          ${dayOpts}
+        </select>
+        <input id="tc-time" type="time"
+          style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
+          background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+        <input id="tc-capacity" type="number" min="1" placeholder="Capacity" value="20"
+          style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
+          background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+      </div>
+      <button id="tc-create-btn" style="margin-top:14px;padding:10px 28px;border:none;border-radius:8px;
+        background:linear-gradient(90deg,#ff0033,#ff5500);color:#fff;cursor:pointer;
+        font-family:Poppins,sans-serif;font-weight:600">Create Class</button>
+    </div>
+
+    <div id="tc-class-list">${classCards}</div>
+  `;
+
+  // Create handler
+  document.getElementById("tc-create-btn").addEventListener("click", async () => {
+    const name = document.getElementById("tc-name").value.trim();
+    const day = document.getElementById("tc-day").value;
+    const time = document.getElementById("tc-time").value;
+    const capacity = parseInt(document.getElementById("tc-capacity").value) || 20;
+    if (!name) { showToast("Enter a class name.", "error"); return; }
+    if (!time) { showToast("Select a time.", "error"); return; }
+    try {
+      await createClass(trainerUid, trainerName, { name, day, time, capacity });
+      showToast("Class created!", "success");
+      _loadTrainerClassesPanel(trainerUid, trainerName);
+    } catch (e) {
+      showToast(e.message, "error");
+    }
+  });
+
+  // Delete handlers
+  panel.querySelectorAll(".tc-del-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      showModal("Delete Class", `<p>Delete <strong>${btn.dataset.name}</strong>?</p>`, async () => {
+        await deleteClass(btn.dataset.id);
+        showToast("Class deleted.", "success");
+        _loadTrainerClassesPanel(trainerUid, trainerName);
+      });
+    });
+  });
 }
 
 // --------------------------------------------------------
@@ -2347,6 +2985,15 @@ async function initTrainerPage() {
     // DEV/TEST MODE: skip redirect so pages can be opened directly
     console.warn("[X-Gym] Trainer page: no user logged in — skipping redirect (test mode)");
     initPanelNav();
+    _bindCardToPanel("card-cart",           "panel-cart");
+    _bindCardToPanel("card-workout-builder","panel-workout-builder");
+    _bindCardToPanel("card-membership",     "panel-membership");
+    _bindCardToPanel("card-client-progress","panel-clients");
+    _bindCardToPanel("card-client-tracker", "panel-client-detail");
+    _bindCardToPanel("card-store",          "panel-share-code");
+    _bindCardToPanel("card-classes",         "panel-classes");
+    _bindCardToPanel("card-messenger",        "panel-messenger");
+    _bindCardToPanel("card-settings",       "panel-settings");
     return;
   }
 
@@ -2355,7 +3002,7 @@ async function initTrainerPage() {
   let profile = null;
   for (let attempt = 0; attempt < 6; attempt++) {
     try {
-      profile = await getUserProfile(user.uid);
+      profile = await getUserProfile(user.uid, user.email);
       if (profile) break;
     } catch (e) { console.warn("[X-Gym] Profile fetch attempt", attempt, e); }
     await new Promise(r => setTimeout(r, 800));
@@ -2364,6 +3011,15 @@ async function initTrainerPage() {
   if (!profile) {
     console.warn("[X-Gym] Trainer page: no profile found — staying on page (test mode)");
     initPanelNav();
+    _bindCardToPanel("card-cart",           "panel-cart");
+    _bindCardToPanel("card-workout-builder","panel-workout-builder");
+    _bindCardToPanel("card-membership",     "panel-membership");
+    _bindCardToPanel("card-client-progress","panel-clients");
+    _bindCardToPanel("card-client-tracker", "panel-client-detail");
+    _bindCardToPanel("card-store",          "panel-share-code");
+    _bindCardToPanel("card-classes",         "panel-classes");
+    _bindCardToPanel("card-messenger",        "panel-messenger");
+    _bindCardToPanel("card-settings",       "panel-settings");
     return;
   }
   if (profile.role !== "trainer") {
@@ -2410,7 +3066,7 @@ async function initTrainerPage() {
     _loadTrainerMealPlannerPanel(user.uid);
     _loadCartPanel();
     _loadTrainerMembershipPanel(user.uid);
-    _loadTrainerClassesPlaceholder();
+    _loadTrainerClassesPanel(user.uid, profile.name);
     _loadTrainerMessengerPanel(user.uid, profile.name);
   }
 }
@@ -2654,17 +3310,31 @@ async function _loadTrainerWorkoutBuilderPanel(trainerUid) {
   const panel = document.getElementById("panel-workout-builder");
   if (!panel) return;
 
+  const DAYS = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
+  const dayOpts = DAYS.map(d => `<option value="${d}">${d}</option>`).join("");
+  const categories = ["Push","Pull","Legs","Cardio","Full Body","Other"];
+  const catOpts = categories.map(c => `<option value="${c}">${c}</option>`).join("");
+  const inputStyle = `padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
+    background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif`;
+
   panel.innerHTML = `
     <h2 style="color:#0887e2">Workout Builder</h2>
-    <div class="card">
+    <div class="card" style="margin-bottom:20px">
       <h3>Create Workout for Client</h3>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
+      <div style="display:flex;gap:12px;margin-top:12px;align-items:center">
         <input id="wb-client-code" type="text" placeholder="Client share code"
-          style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-                 background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
-        <input id="wb-day" type="text" placeholder="Day (e.g. Monday)"
-          style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-                 background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+          style="flex:1;${inputStyle}">
+        <button id="wb-view-plans" style="padding:8px 18px;border:none;border-radius:8px;
+          background:rgba(8,135,226,0.2);color:#0887e2;cursor:pointer;font-family:Poppins,sans-serif;
+          font-size:0.85rem;white-space:nowrap">View Existing Plans</button>
+      </div>
+      <div id="wb-existing-plans" style="margin-top:14px;display:none"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px">
+        <select id="wb-day" style="${inputStyle}">${dayOpts}</select>
+        <select id="wb-category" style="${inputStyle}">
+          <option value="">— Category —</option>
+          ${catOpts}
+        </select>
       </div>
       <div id="wb-exercises" style="margin-top:16px"></div>
       <button id="wb-add-exercise"
@@ -2676,59 +3346,94 @@ async function _loadTrainerWorkoutBuilderPanel(trainerUid) {
       <button id="wb-save"
         style="padding:10px 24px;border:none;border-radius:8px;
                background:linear-gradient(90deg,#ff0033,#ff5500);color:#fff;
-               cursor:pointer;font-family:Poppins,sans-serif">
+               cursor:pointer;font-family:Poppins,sans-serif;font-weight:600">
         Save Workout
       </button>
     </div>
   `;
 
-  let exerciseCount = 0;
-
   document.getElementById("wb-add-exercise").addEventListener("click", () => {
-    exerciseCount++;
     const row = document.createElement("div");
-    row.style.cssText = "display:grid;grid-template-columns:2fr 1fr 1fr 2fr;gap:10px;margin-bottom:10px";
+    row.style.cssText = "display:grid;grid-template-columns:2fr 1fr 1fr 1fr 2fr auto;gap:8px;margin-bottom:10px;align-items:center";
     row.innerHTML = `
-      <input class="wb-ex-name" type="text" placeholder="Exercise name"
-        style="padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-               background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
-      <input class="wb-ex-sets" type="number" placeholder="Sets"
-        style="padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-               background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
-      <input class="wb-ex-reps" type="number" placeholder="Reps"
-        style="padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-               background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
-      <input class="wb-ex-notes" type="text" placeholder="Notes (optional)"
-        style="padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-               background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
-    `;
+      <input class="wb-ex-name" type="text" placeholder="Exercise name" style="${inputStyle}">
+      <input class="wb-ex-sets" type="number" placeholder="Sets" style="${inputStyle}">
+      <input class="wb-ex-reps" type="number" placeholder="Reps" style="${inputStyle}">
+      <input class="wb-ex-weight" type="number" placeholder="Weight (lb)" style="${inputStyle}">
+      <input class="wb-ex-notes" type="text" placeholder="Notes (optional)" style="${inputStyle}">
+      <button class="wb-remove-ex" style="padding:4px 10px;border:none;border-radius:6px;
+        background:rgba(255,0,51,0.3);color:#ff0033;cursor:pointer;font-size:0.9rem">×</button>`;
     document.getElementById("wb-exercises").appendChild(row);
+    row.querySelector(".wb-remove-ex").addEventListener("click", () => row.remove());
+  });
+
+  // View existing plans
+  document.getElementById("wb-view-plans").addEventListener("click", async () => {
+    const code = document.getElementById("wb-client-code").value.trim();
+    if (!code) { showToast("Enter client share code first.", "error"); return; }
+    const container = document.getElementById("wb-existing-plans");
+    container.style.display = "block";
+    container.innerHTML = '<p style="opacity:0.5">Loading...</p>';
+    try {
+      const client = await _findUserByShareCode(code, "client");
+      if (!client) { container.innerHTML = '<p style="color:#ff0033">Client not found.</p>'; return; }
+      const plans = await getTrainerWorkouts(trainerUid, client.id);
+      if (plans.length === 0) {
+        container.innerHTML = '<p style="opacity:0.5">No workouts found for this client.</p>';
+        return;
+      }
+      container.innerHTML = plans.map(p => {
+        const catBadge = p.category ? `<span style="display:inline-block;padding:2px 10px;border-radius:12px;
+          background:rgba(8,135,226,0.15);color:#0887e2;font-size:0.72rem;font-weight:600;margin-left:8px">${p.category}</span>` : "";
+        const exList = (p.exercises || []).map(ex =>
+          `<span style="display:inline-block;margin:2px 4px;padding:3px 10px;border-radius:12px;
+           background:rgba(255,255,255,0.06);font-size:0.78rem">${ex.name} ${ex.sets}x${ex.reps}${ex.weight ? " @ " + ex.weight + "lb" : ""}</span>`).join("");
+        return `<div class="card" style="margin-bottom:10px;font-size:0.85rem">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <span><strong>${p.day}</strong>${catBadge} — ${formatDate(p.createdAt)}</span>
+            <button class="wb-del-plan" data-id="${p.id}" style="padding:4px 12px;border:none;border-radius:6px;
+              background:rgba(255,0,51,0.3);color:#ff0033;cursor:pointer;font-size:0.78rem">Delete</button>
+          </div>
+          <div style="margin-top:6px">${exList}</div>
+        </div>`;
+      }).join("");
+      container.querySelectorAll(".wb-del-plan").forEach(btn => {
+        btn.addEventListener("click", async () => {
+          await deleteWorkout(btn.dataset.id);
+          showToast("Workout deleted.", "success");
+          document.getElementById("wb-view-plans").click();
+        });
+      });
+    } catch (e) {
+      container.innerHTML = `<p style="color:#ff0033">${e.message}</p>`;
+    }
   });
 
   document.getElementById("wb-save").addEventListener("click", async () => {
     const clientCode = document.getElementById("wb-client-code").value.trim();
-    const day        = document.getElementById("wb-day").value.trim();
-    if (!clientCode || !day) { showToast("Enter client share code and day.", "error"); return; }
+    const day        = document.getElementById("wb-day").value;
+    const category   = document.getElementById("wb-category").value;
+    if (!clientCode) { showToast("Enter client share code.", "error"); return; }
 
     const exercises = [];
     document.querySelectorAll("#wb-exercises > div").forEach(row => {
+      const name = row.querySelector(".wb-ex-name").value.trim();
+      if (!name) return;
       exercises.push({
-        name:  row.querySelector(".wb-ex-name").value.trim(),
-        sets:  parseInt(row.querySelector(".wb-ex-sets").value) || 0,
-        reps:  parseInt(row.querySelector(".wb-ex-reps").value) || 0,
-        notes: row.querySelector(".wb-ex-notes").value.trim()
+        name,
+        sets:   parseInt(row.querySelector(".wb-ex-sets").value) || 0,
+        reps:   parseInt(row.querySelector(".wb-ex-reps").value) || 0,
+        weight: parseFloat(row.querySelector(".wb-ex-weight").value) || 0,
+        notes:  row.querySelector(".wb-ex-notes").value.trim()
       });
     });
 
     if (exercises.length === 0) { showToast("Add at least one exercise.", "error"); return; }
 
     try {
-      // Resolve client by share code
       const client = await _findUserByShareCode(clientCode, "client");
       if (!client) { showToast("Client not found.", "error"); return; }
-      const clientId = client.id;
-
-      await createWorkout(trainerUid, clientId, { day, exercises });
+      await createWorkout(trainerUid, client.id, { day, category, exercises });
       showToast("Workout saved!", "success");
     } catch (e) {
       showToast(e.message, "error");
@@ -2740,86 +3445,184 @@ async function _loadTrainerMealPlannerPanel(trainerUid) {
   const panel = document.getElementById("panel-meal-planner");
   if (!panel) return;
 
+  const DAYS = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
+  const dayOpts = DAYS.map(d => `<option value="${d}">${d}</option>`).join("");
+  const inputStyle = `padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
+    background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif`;
+
   panel.innerHTML = `
     <h2 style="color:#0887e2">Meal Planner</h2>
-    <div class="card">
+    <div class="card" style="margin-bottom:20px">
       <h3>Create Meal Plan for Client</h3>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
+      <div style="display:flex;gap:12px;margin-top:12px;align-items:center">
         <input id="mp-client-code" type="text" placeholder="Client share code"
-          style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-                 background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
-        <input id="mp-day" type="text" placeholder="Day (e.g. Monday)"
-          style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-                 background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+          style="flex:1;${inputStyle}">
+        <button id="mp-view-plans" style="padding:8px 18px;border:none;border-radius:8px;
+          background:rgba(8,135,226,0.2);color:#0887e2;cursor:pointer;font-family:Poppins,sans-serif;
+          font-size:0.85rem;white-space:nowrap">View Existing Plans</button>
       </div>
-      <div id="mp-meals" style="margin-top:16px"></div>
-      <button id="mp-add-meal"
-        style="margin-top:10px;padding:8px 18px;border:none;border-radius:8px;
-               background:rgba(255,255,255,0.1);color:#fff;cursor:pointer;font-family:Poppins,sans-serif">
-        + Add Meal
-      </button>
-      <br><br>
-      <button id="mp-save"
-        style="padding:10px 24px;border:none;border-radius:8px;
-               background:linear-gradient(90deg,#ff0033,#ff5500);color:#fff;
-               cursor:pointer;font-family:Poppins,sans-serif">
-        Save Meal Plan
-      </button>
+      <div id="mp-existing-plans" style="margin-top:14px;display:none"></div>
+
+      <div id="mp-day-sections" style="margin-top:18px">
+        <div class="mp-day-section" style="margin-bottom:16px;padding:14px;border-radius:10px;
+          border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.02)">
+          <div style="display:flex;gap:12px;align-items:center;margin-bottom:10px">
+            <label style="font-size:0.85rem;font-weight:600;color:#0887e2">Day:</label>
+            <select class="mp-day-select" style="${inputStyle}">${dayOpts}</select>
+          </div>
+          <div class="mp-meals-container"></div>
+          <button class="mp-add-meal-btn"
+            style="margin-top:8px;padding:6px 14px;border:none;border-radius:6px;
+            background:rgba(255,255,255,0.08);color:#fff;cursor:pointer;font-family:Poppins,sans-serif;font-size:0.82rem">
+            + Add Meal</button>
+          <div class="mp-day-summary" style="margin-top:10px;font-size:0.82rem;color:#0887e2;font-weight:600"></div>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:12px;margin-top:14px">
+        <button id="mp-add-day" style="padding:8px 18px;border:none;border-radius:8px;
+          background:rgba(255,255,255,0.08);color:#fff;cursor:pointer;font-family:Poppins,sans-serif;font-size:0.85rem">
+          + Add Another Day</button>
+        <button id="mp-save" style="padding:10px 24px;border:none;border-radius:8px;
+          background:linear-gradient(90deg,#ff0033,#ff5500);color:#fff;cursor:pointer;
+          font-family:Poppins,sans-serif;font-weight:600">Save Meal Plan</button>
+      </div>
     </div>
   `;
 
-  document.getElementById("mp-add-meal").addEventListener("click", () => {
+  function addMealRow(container) {
     const row = document.createElement("div");
-    row.style.cssText = "display:grid;grid-template-columns:2fr 1fr 1fr 1fr 1fr 1fr;gap:8px;margin-bottom:10px";
+    row.style.cssText = "display:grid;grid-template-columns:2fr 1fr 1fr 1fr 1fr 1fr auto;gap:6px;margin-bottom:8px;align-items:center";
     row.innerHTML = `
-      <input class="mp-m-name" type="text" placeholder="Meal name"
-        style="padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-               background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
-      <input class="mp-m-cal" type="number" placeholder="Cal"
-        style="padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-               background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
-      <input class="mp-m-protein" type="number" placeholder="Protein"
-        style="padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-               background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
-      <input class="mp-m-carbs" type="number" placeholder="Carbs"
-        style="padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-               background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
-      <input class="mp-m-fats" type="number" placeholder="Fats"
-        style="padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-               background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
-      <input class="mp-m-time" type="text" placeholder="Time (e.g. 8am)"
-        style="padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-               background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
-    `;
-    document.getElementById("mp-meals").appendChild(row);
+      <input class="mp-m-name" type="text" placeholder="Meal name" style="${inputStyle}">
+      <input class="mp-m-cal" type="number" placeholder="Cal" style="${inputStyle}">
+      <input class="mp-m-protein" type="number" placeholder="Protein" style="${inputStyle}">
+      <input class="mp-m-carbs" type="number" placeholder="Carbs" style="${inputStyle}">
+      <input class="mp-m-fats" type="number" placeholder="Fats" style="${inputStyle}">
+      <input class="mp-m-time" type="text" placeholder="Time" style="${inputStyle}">
+      <button class="mp-remove-meal" style="padding:4px 10px;border:none;border-radius:6px;
+        background:rgba(255,0,51,0.3);color:#ff0033;cursor:pointer;font-size:0.9rem">×</button>`;
+    container.appendChild(row);
+    row.querySelector(".mp-remove-meal").addEventListener("click", () => { row.remove(); updateDaySummaries(); });
+    row.querySelectorAll("input[type=number]").forEach(inp => inp.addEventListener("input", updateDaySummaries));
+  }
+
+  function updateDaySummaries() {
+    panel.querySelectorAll(".mp-day-section").forEach(section => {
+      let cal = 0, prot = 0, carb = 0, fat = 0;
+      section.querySelectorAll(".mp-meals-container > div").forEach(row => {
+        cal  += parseFloat(row.querySelector(".mp-m-cal")?.value) || 0;
+        prot += parseFloat(row.querySelector(".mp-m-protein")?.value) || 0;
+        carb += parseFloat(row.querySelector(".mp-m-carbs")?.value) || 0;
+        fat  += parseFloat(row.querySelector(".mp-m-fats")?.value) || 0;
+      });
+      const summary = section.querySelector(".mp-day-summary");
+      if (summary) summary.textContent = cal || prot || carb || fat
+        ? `Totals: ${cal} cal | ${prot}g P | ${carb}g C | ${fat}g F` : "";
+    });
+  }
+
+  function addDaySection() {
+    const section = document.createElement("div");
+    section.className = "mp-day-section";
+    section.style.cssText = "margin-bottom:16px;padding:14px;border-radius:10px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.02)";
+    section.innerHTML = `
+      <div style="display:flex;gap:12px;align-items:center;margin-bottom:10px">
+        <label style="font-size:0.85rem;font-weight:600;color:#0887e2">Day:</label>
+        <select class="mp-day-select" style="${inputStyle}">${dayOpts}</select>
+        <button class="mp-remove-day" style="margin-left:auto;padding:4px 10px;border:none;border-radius:6px;
+          background:rgba(255,0,51,0.3);color:#ff0033;cursor:pointer;font-size:0.82rem">Remove Day</button>
+      </div>
+      <div class="mp-meals-container"></div>
+      <button class="mp-add-meal-btn"
+        style="margin-top:8px;padding:6px 14px;border:none;border-radius:6px;
+        background:rgba(255,255,255,0.08);color:#fff;cursor:pointer;font-family:Poppins,sans-serif;font-size:0.82rem">
+        + Add Meal</button>
+      <div class="mp-day-summary" style="margin-top:10px;font-size:0.82rem;color:#0887e2;font-weight:600"></div>`;
+    document.getElementById("mp-day-sections").appendChild(section);
+    section.querySelector(".mp-remove-day").addEventListener("click", () => section.remove());
+    section.querySelector(".mp-add-meal-btn").addEventListener("click", () => addMealRow(section.querySelector(".mp-meals-container")));
+  }
+
+  // Wire initial day section's add meal button
+  panel.querySelector(".mp-add-meal-btn").addEventListener("click", () => {
+    addMealRow(panel.querySelector(".mp-meals-container"));
   });
 
+  document.getElementById("mp-add-day").addEventListener("click", addDaySection);
+
+  // View existing plans
+  document.getElementById("mp-view-plans").addEventListener("click", async () => {
+    const code = document.getElementById("mp-client-code").value.trim();
+    if (!code) { showToast("Enter client share code first.", "error"); return; }
+    const container = document.getElementById("mp-existing-plans");
+    container.style.display = "block";
+    container.innerHTML = '<p style="opacity:0.5">Loading...</p>';
+    try {
+      const client = await _findUserByShareCode(code, "client");
+      if (!client) { container.innerHTML = '<p style="color:#ff0033">Client not found.</p>'; return; }
+      const plans = await getTrainerMealPlans(trainerUid, client.id);
+      if (plans.length === 0) {
+        container.innerHTML = '<p style="opacity:0.5">No meal plans found for this client.</p>';
+        return;
+      }
+      container.innerHTML = plans.map(p => {
+        const meals = (p.meals || []).map(m =>
+          `<span style="display:inline-block;margin:2px 4px;padding:3px 10px;border-radius:12px;
+           background:rgba(8,135,226,0.12);font-size:0.78rem">${m.name} (${m.calories}cal)</span>`).join("");
+        return `<div class="card" style="margin-bottom:10px;font-size:0.85rem">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <span><strong>${p.day}</strong> — ${formatDate(p.createdAt)}</span>
+            <button class="mp-del-plan" data-id="${p.id}" style="padding:4px 12px;border:none;border-radius:6px;
+              background:rgba(255,0,51,0.3);color:#ff0033;cursor:pointer;font-size:0.78rem">Delete</button>
+          </div>
+          <div style="margin-top:6px">${meals}</div>
+        </div>`;
+      }).join("");
+      container.querySelectorAll(".mp-del-plan").forEach(btn => {
+        btn.addEventListener("click", async () => {
+          await deleteMealPlan(btn.dataset.id);
+          showToast("Plan deleted.", "success");
+          document.getElementById("mp-view-plans").click();
+        });
+      });
+    } catch (e) {
+      container.innerHTML = `<p style="color:#ff0033">${e.message}</p>`;
+    }
+  });
+
+  // Save
   document.getElementById("mp-save").addEventListener("click", async () => {
     const clientCode = document.getElementById("mp-client-code").value.trim();
-    const day        = document.getElementById("mp-day").value.trim();
-    if (!clientCode || !day) { showToast("Enter client share code and day.", "error"); return; }
+    if (!clientCode) { showToast("Enter client share code.", "error"); return; }
 
-    const meals = [];
-    document.querySelectorAll("#mp-meals > div").forEach(row => {
-      meals.push({
-        name:    row.querySelector(".mp-m-name").value.trim(),
-        calories:parseFloat(row.querySelector(".mp-m-cal").value)     || 0,
-        protein: parseFloat(row.querySelector(".mp-m-protein").value) || 0,
-        carbs:   parseFloat(row.querySelector(".mp-m-carbs").value)   || 0,
-        fats:    parseFloat(row.querySelector(".mp-m-fats").value)    || 0,
-        time:    row.querySelector(".mp-m-time").value.trim()
-      });
-    });
-
-    if (meals.length === 0) { showToast("Add at least one meal.", "error"); return; }
+    const daySections = panel.querySelectorAll(".mp-day-section");
+    if (daySections.length === 0) { showToast("Add at least one day.", "error"); return; }
 
     try {
       const client = await _findUserByShareCode(clientCode, "client");
       if (!client) { showToast("Client not found.", "error"); return; }
-      const clientId = client.id;
 
-      await createMealPlan(trainerUid, clientId, { day, meals });
-      showToast("Meal plan saved!", "success");
+      for (const section of daySections) {
+        const day = section.querySelector(".mp-day-select").value;
+        const meals = [];
+        section.querySelectorAll(".mp-meals-container > div").forEach(row => {
+          const name = row.querySelector(".mp-m-name").value.trim();
+          if (!name) return;
+          meals.push({
+            name,
+            calories: parseFloat(row.querySelector(".mp-m-cal").value) || 0,
+            protein:  parseFloat(row.querySelector(".mp-m-protein").value) || 0,
+            carbs:    parseFloat(row.querySelector(".mp-m-carbs").value) || 0,
+            fats:     parseFloat(row.querySelector(".mp-m-fats").value) || 0,
+            time:     row.querySelector(".mp-m-time").value.trim()
+          });
+        });
+        if (meals.length > 0) {
+          await createMealPlan(trainerUid, client.id, { day, meals });
+        }
+      }
+      showToast("Meal plan(s) saved!", "success");
     } catch (e) {
       showToast(e.message, "error");
     }
@@ -2868,13 +3671,21 @@ async function initAdminPage() {
     // DEV/TEST MODE: skip redirect so pages can be opened directly
     console.warn("[X-Gym] Admin page: no user logged in — skipping redirect (test mode)");
     initPanelNav();
+    _bindCardToPanel("card-overview",     "panel-overview");
+    _bindCardToPanel("card-members",      "panel-members");
+    _bindCardToPanel("card-store-mgmt",   "panel-store");
+    _bindCardToPanel("card-memberships",  "panel-memberships");
+    _bindCardToPanel("card-finances",     "panel-finances");
+    _bindCardToPanel("card-trainer-links","panel-trainer-links");
+    _bindCardToPanel("card-classes",      "panel-classes");
+    _bindCardToPanel("card-messenger",    "panel-messenger");
     return;
   }
 
   let profile = null;
   for (let attempt = 0; attempt < 8; attempt++) {
     try {
-      profile = await getUserProfile(user.uid);
+      profile = await getUserProfile(user.uid, user.email);
       console.log("[X-Gym] initAdminPage: profile fetch attempt", attempt, "result:", profile);
       if (profile) break;
     } catch (e) {
@@ -2886,6 +3697,14 @@ async function initAdminPage() {
   if (!profile) {
     console.warn("[X-Gym] Admin page: no profile found — staying on page (test mode)");
     initPanelNav();
+    _bindCardToPanel("card-overview",     "panel-overview");
+    _bindCardToPanel("card-members",      "panel-members");
+    _bindCardToPanel("card-store-mgmt",   "panel-store");
+    _bindCardToPanel("card-memberships",  "panel-memberships");
+    _bindCardToPanel("card-finances",     "panel-finances");
+    _bindCardToPanel("card-trainer-links","panel-trainer-links");
+    _bindCardToPanel("card-classes",      "panel-classes");
+    _bindCardToPanel("card-messenger",    "panel-messenger");
     return;
   }
   if (profile.role !== "admin") {
@@ -2908,6 +3727,7 @@ async function initAdminPage() {
   _bindCardToPanel("card-memberships",  "panel-memberships");
   _bindCardToPanel("card-finances",     "panel-finances");
   _bindCardToPanel("card-trainer-links","panel-trainer-links");
+  _bindCardToPanel("card-classes",      "panel-classes");
   _bindCardToPanel("card-messenger",    "panel-messenger");
 
   // Load all admin panels with error handling
@@ -2920,6 +3740,7 @@ async function initAdminPage() {
       _loadAdminMembershipsPanel().catch(e => console.error("[X-Gym] Memberships panel error:", e)),
       _loadAdminFinancesPanel().catch(e => console.error("[X-Gym] Finances panel error:", e)),
       _loadAdminTrainerLinksPanel().catch(e => console.error("[X-Gym] TrainerLinks panel error:", e)),
+      _loadAdminClassesPanel().catch(e => console.error("[X-Gym] Classes panel error:", e)),
       _loadAdminMessengerPanel().catch(e => console.error("[X-Gym] Messenger panel error:", e))
     ]);
     console.log("[X-Gym] initAdminPage: all panels loaded.");
@@ -4203,6 +5024,193 @@ async function _loadTrainerMessengerPanel(trainerId, trainerName) {
 
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter") sendBtn.click();
+  });
+}
+
+// ============================================================
+// ADMIN MANAGE CLASSES PANEL
+// ============================================================
+async function _loadAdminClassesPanel() {
+  const panel = document.getElementById("panel-classes");
+  if (!panel) return;
+
+  const DAYS = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
+  const classes = await getClasses();
+  const trainers = await getAvailableTrainers();
+
+  // Build booking counts
+  const counts = {};
+  for (const c of classes) {
+    counts[c.id] = await getClassBookingCount(c.id);
+  }
+
+  const trainerOpts = trainers.map(t =>
+    `<option value="${t.id}" data-name="${t.name}">${t.name}</option>`
+  ).join("");
+
+  const dayOpts = DAYS.map(d => `<option value="${d}">${d}</option>`).join("");
+
+  // Build weekly schedule rows grouped by day
+  let scheduleRows = "";
+  for (const day of DAYS) {
+    const dayClasses = classes.filter(c => c.day === day);
+    if (dayClasses.length === 0) continue;
+    scheduleRows += `<tr><td colspan="7" style="background:rgba(8,135,226,0.1);color:#0887e2;font-weight:700;padding:10px 14px;
+      font-family:Orbitron,sans-serif;font-size:0.85rem;letter-spacing:1px">${day}</td></tr>`;
+    for (const c of dayClasses) {
+      const booked = counts[c.id] || 0;
+      const full = booked >= (c.capacity || 20);
+      scheduleRows += `
+        <tr style="border-bottom:1px solid rgba(255,255,255,0.05)">
+          <td style="padding:10px 14px">${c.name}</td>
+          <td style="padding:10px 14px">${c.time}</td>
+          <td style="padding:10px 14px">${c.trainerName || "Unassigned"}</td>
+          <td style="padding:10px 14px">
+            <span style="color:${full ? "#ff0033" : "#0f0"}">${booked}/${c.capacity || 20}</span>
+          </td>
+          <td style="padding:10px 14px">
+            <button class="ac-edit-btn" data-id="${c.id}" data-name="${c.name}" data-day="${c.day}"
+              data-time="${c.time}" data-trainer="${c.trainerId}" data-cap="${c.capacity}"
+              style="padding:6px 14px;border:none;border-radius:6px;
+              background:linear-gradient(90deg,#0887e2,#06c);color:#fff;cursor:pointer;
+              font-family:Poppins,sans-serif;font-size:0.78rem;margin-right:6px">Edit</button>
+            <button class="ac-del-btn" data-id="${c.id}" data-name="${c.name}"
+              style="padding:6px 14px;border:none;border-radius:6px;
+              background:linear-gradient(90deg,#ff0033,#ff5500);color:#fff;cursor:pointer;
+              font-family:Poppins,sans-serif;font-size:0.78rem">Delete</button>
+          </td>
+        </tr>`;
+    }
+  }
+  if (!scheduleRows) {
+    scheduleRows = `<tr><td colspan="7" style="text-align:center;padding:30px;opacity:0.5">No classes created yet.</td></tr>`;
+  }
+
+  panel.innerHTML = `
+    <h2 style="color:#0887e2">Manage Classes</h2>
+
+    <div class="card" style="margin-bottom:24px">
+      <h3 style="margin-bottom:14px">Create New Class</h3>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
+        <input id="ac-name" type="text" placeholder="Class Name"
+          style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
+          background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+        <select id="ac-day"
+          style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
+          background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+          ${dayOpts}
+        </select>
+        <input id="ac-time" type="time"
+          style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
+          background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
+        <select id="ac-trainer"
+          style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
+          background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+          <option value="">— Select Trainer —</option>
+          ${trainerOpts}
+        </select>
+        <input id="ac-capacity" type="number" min="1" placeholder="Capacity (e.g. 20)" value="20"
+          style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
+          background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+      </div>
+      <button id="ac-create-btn" style="margin-top:14px;padding:10px 28px;border:none;border-radius:8px;
+        background:linear-gradient(90deg,#ff0033,#ff5500);color:#fff;cursor:pointer;
+        font-family:Poppins,sans-serif;font-weight:600">Create Class</button>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-bottom:14px">Weekly Schedule</h3>
+      <div style="overflow-x:auto">
+        <table style="width:100%;border-collapse:collapse;font-size:0.9rem">
+          <thead>
+            <tr style="border-bottom:2px solid rgba(8,135,226,0.3)">
+              <th style="text-align:left;padding:10px 14px;color:#0887e2">Class</th>
+              <th style="text-align:left;padding:10px 14px;color:#0887e2">Time</th>
+              <th style="text-align:left;padding:10px 14px;color:#0887e2">Trainer</th>
+              <th style="text-align:left;padding:10px 14px;color:#0887e2">Booked</th>
+              <th style="text-align:left;padding:10px 14px;color:#0887e2">Actions</th>
+            </tr>
+          </thead>
+          <tbody>${scheduleRows}</tbody>
+        </table>
+      </div>
+    </div>
+  `;
+
+  // Create class
+  document.getElementById("ac-create-btn").addEventListener("click", async () => {
+    const name = document.getElementById("ac-name").value.trim();
+    const day = document.getElementById("ac-day").value;
+    const time = document.getElementById("ac-time").value;
+    const trainerSel = document.getElementById("ac-trainer");
+    const trainerId = trainerSel.value;
+    const trainerName = trainerSel.selectedOptions[0]?.dataset.name || "";
+    const capacity = parseInt(document.getElementById("ac-capacity").value) || 20;
+    if (!name) { showToast("Enter a class name.", "error"); return; }
+    if (!time) { showToast("Select a time.", "error"); return; }
+    if (!trainerId) { showToast("Select a trainer.", "error"); return; }
+    try {
+      await createClass(trainerId, trainerName, { name, day, time, capacity });
+      showToast("Class created!", "success");
+      _loadAdminClassesPanel();
+    } catch (e) {
+      showToast(e.message, "error");
+    }
+  });
+
+  // Edit buttons
+  panel.querySelectorAll(".ac-edit-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const id = btn.dataset.id;
+      const editHTML = `
+        <div style="display:grid;gap:12px;margin-top:10px">
+          <input id="ac-edit-name" value="${btn.dataset.name}" placeholder="Class Name"
+            style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
+            background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+          <select id="ac-edit-day"
+            style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
+            background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+            ${DAYS.map(d => `<option value="${d}" ${d === btn.dataset.day ? "selected" : ""}>${d}</option>`).join("")}
+          </select>
+          <input id="ac-edit-time" type="time" value="${btn.dataset.time}"
+            style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
+            background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+          <select id="ac-edit-trainer"
+            style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
+            background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+            ${trainers.map(t => `<option value="${t.id}" data-name="${t.name}" ${t.id === btn.dataset.trainer ? "selected" : ""}>${t.name}</option>`).join("")}
+          </select>
+          <input id="ac-edit-cap" type="number" min="1" value="${btn.dataset.cap}"
+            style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
+            background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+        </div>`;
+      showModal("Edit Class", editHTML, async () => {
+        const trSel = document.getElementById("ac-edit-trainer");
+        await updateClass(id, {
+          name: document.getElementById("ac-edit-name").value.trim(),
+          day: document.getElementById("ac-edit-day").value,
+          time: document.getElementById("ac-edit-time").value,
+          trainerId: trSel.value,
+          trainerName: trSel.selectedOptions[0]?.dataset.name || "",
+          capacity: parseInt(document.getElementById("ac-edit-cap").value) || 20
+        });
+        showToast("Class updated!", "success");
+        _loadAdminClassesPanel();
+      });
+    });
+  });
+
+  // Delete buttons
+  panel.querySelectorAll(".ac-del-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      showModal("Delete Class", `<p>Delete <strong>${btn.dataset.name}</strong>? All bookings will also be removed.</p>`, async () => {
+        await deleteClass(btn.dataset.id);
+        showToast("Class deleted.", "success");
+        _loadAdminClassesPanel();
+      });
+    });
   });
 }
 

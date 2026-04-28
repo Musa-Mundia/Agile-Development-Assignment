@@ -112,7 +112,7 @@ nav {
 
 .hero-title{font-family:'Black Han Sans',cursive;font-size:clamp(5rem,18vw,15rem);line-height:0.85;letter-spacing:0.06em;opacity:0;animation:powerUp .8s .5s forwards;position:relative;}
 .hero-title .t-x{display:block;color:var(--white);text-shadow:0 0 60px rgba(8,165,226,0.5),0 0 120px rgba(8,165,226,0.2),0 0 20px var(--red);position:relative;}
-.hero-title .t-gym{display:block;color:;-webkit-text-stroke:2px rgba(8,165,226,0.3);font-size:0.55em;letter-spacing:0.2em;}
+.hero-title .t-gym{display:block;color:transparent;-webkit-text-stroke:2px rgba(8,165,226,0.3);font-size:0.55em;letter-spacing:0.2em;}
 @keyframes powerUp{0%{opacity:0;transform:scale(0.8)}60%{transform:scale(1.05)}100%{opacity:1;transform:scale(1)}}
 
 .hero-level{margin:2rem 0;opacity:0;animation:fadeUp .6s .8s forwards;}
@@ -386,6 +386,94 @@ footer{position:relative;z-index:10;background:rgba(0,18,32,0.95);border-top:1px
   .product{flex-direction:column !important;text-align:center;}
   .product-img img{width:100%;max-width:400px;}
   .nav-links{display:none;}
+  .tier-grid{grid-template-columns:1fr !important;}
+  .tier-card.featured{transform:none !important;}
+}
+
+/* Membership Tiers */
+.membership-section{
+  position:relative;z-index:10;background:var(--deep);
+  border-top:1px solid rgba(8,165,226,0.15);
+  padding:7rem 3rem;text-align:center;
+}
+.membership-section h2{
+  font-family:'Black Han Sans',cursive;font-size:clamp(2rem,4vw,3rem);
+  letter-spacing:0.06em;margin-bottom:0.8rem;
+}
+.membership-section h2 span{color:var(--aura);text-shadow:0 0 20px rgba(8,165,226,0.4);}
+.membership-sub{font-size:1rem;font-weight:300;color:rgba(241,249,254,0.5);margin-bottom:3rem;}
+.tier-grid{
+  display:grid;grid-template-columns:repeat(3,1fr);
+  gap:22px;max-width:1100px;margin:0 auto;
+}
+.tier-card{
+  position:relative;
+  background:rgba(0,18,32,0.9);
+  border:1px solid rgba(8,165,226,0.15);
+  border-radius:14px;
+  backdrop-filter:blur(12px);
+  padding:36px 28px;
+  transition:all 0.35s ease;
+  display:flex;flex-direction:column;align-items:center;
+}
+.tier-card:hover{
+  transform:translateY(-6px);
+  border-color:rgba(8,165,226,0.4);
+  box-shadow:0 12px 40px rgba(8,165,226,0.15);
+}
+.tier-card.featured{
+  border-color:var(--aura);
+  box-shadow:0 0 35px rgba(8,165,226,0.2);
+  transform:scale(1.04);
+}
+.tier-card.featured:hover{
+  transform:scale(1.04) translateY(-6px);
+  box-shadow:0 12px 50px rgba(8,165,226,0.35);
+}
+.tier-badge{
+  position:absolute;top:-14px;left:50%;transform:translateX(-50%);
+  background:linear-gradient(135deg,var(--aura2),var(--aura));
+  color:#fff;font-family:Orbitron,sans-serif;font-size:0.65rem;
+  font-weight:700;letter-spacing:0.1em;
+  padding:5px 18px;border-radius:20px;white-space:nowrap;
+}
+.tier-icon{
+  font-size:2.2rem;margin-bottom:14px;
+}
+.tier-name{
+  font-family:Orbitron,sans-serif;font-size:1.1rem;
+  text-transform:uppercase;letter-spacing:0.12em;
+  color:var(--aura);margin-bottom:12px;
+}
+.tier-price{
+  font-family:Orbitron,sans-serif;font-size:2.4rem;
+  font-weight:700;color:#fff;margin-bottom:20px;
+}
+.tier-price small{font-size:0.85rem;opacity:0.4;font-weight:400;}
+.tier-features{
+  list-style:none;padding:0;margin:0 0 28px;text-align:left;width:100%;
+}
+.tier-features li{
+  position:relative;padding:8px 0 8px 22px;
+  font-size:0.88rem;color:rgba(241,249,254,0.65);
+  border-bottom:1px solid rgba(255,255,255,0.04);
+}
+.tier-features li::before{
+  content:'';position:absolute;left:0;top:50%;transform:translateY(-50%);
+  width:8px;height:8px;border-radius:50%;
+  background:var(--aura);box-shadow:0 0 8px rgba(8,165,226,0.4);
+}
+.tier-cta{
+  display:inline-block;margin-top:auto;
+  padding:12px 32px;border-radius:8px;
+  background:linear-gradient(135deg,var(--aura2),var(--aura));
+  color:#fff;font-family:Orbitron,sans-serif;font-size:0.82rem;
+  font-weight:600;letter-spacing:0.08em;text-decoration:none;
+  transition:all 0.3s ease;
+}
+.tier-cta:hover{
+  box-shadow:0 6px 24px rgba(8,165,226,0.4);
+  transform:translateY(-2px);
 }
 </style>
 </head>
@@ -476,6 +564,56 @@ footer{position:relative;z-index:10;background:rgba(0,18,32,0.95);border-top:1px
     Our facility combines cutting‑edge equipment, expert coaching, and an atmosphere built for champions.
     Every rep, every set, every drop of sweat moves you closer to your strongest self.
   </p>
+</section>
+
+<!-- Membership Tiers -->
+<section class="membership-section reveal">
+  <h2>Choose Your <span>Membership</span></h2>
+  <p class="membership-sub">Unlock your potential with a plan that fits your goals. No contracts, cancel anytime.</p>
+  <div class="tier-grid">
+
+    <div class="tier-card">
+      <div class="tier-icon">&#x1F3CB;&#xFE0F;</div>
+      <h3 class="tier-name">Basic</h3>
+      <div class="tier-price">&pound;19.99<small>/mo</small></div>
+      <ul class="tier-features">
+        <li>Full gym floor access</li>
+        <li>Lockers included</li>
+        <li>6 AM &ndash; 10 PM daily</li>
+        <li>Basic equipment usage</li>
+      </ul>
+      <a href="XGYM_Cart.html" class="tier-cta">Get Started</a>
+    </div>
+
+    <div class="tier-card featured">
+      <span class="tier-badge">MOST POPULAR</span>
+      <div class="tier-icon">&#x26A1;</div>
+      <h3 class="tier-name">Pro</h3>
+      <div class="tier-price">&pound;34.99<small>/mo</small></div>
+      <ul class="tier-features">
+        <li>Everything in Basic</li>
+        <li>Group classes included</li>
+        <li>2 guest passes per month</li>
+        <li>Sauna access</li>
+      </ul>
+      <a href="XGYM_Cart.html" class="tier-cta">Get Started</a>
+    </div>
+
+    <div class="tier-card">
+      <div class="tier-icon">&#x1F451;</div>
+      <h3 class="tier-name">Premium</h3>
+      <div class="tier-price">&pound;54.99<small>/mo</small></div>
+      <ul class="tier-features">
+        <li>All-access &mdash; everything in Pro</li>
+        <li>Sauna &amp; spa</li>
+        <li>2 PT sessions per month</li>
+        <li>24/7 entry</li>
+        <li>Priority class booking</li>
+      </ul>
+      <a href="XGYM_Cart.html" class="tier-cta">Get Started</a>
+    </div>
+
+  </div>
 </section>
 
 <!-- Products Section -->
