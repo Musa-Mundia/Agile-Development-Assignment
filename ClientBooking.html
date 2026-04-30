@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Client Booking Mockup - Reach Trainers</title>
+<link href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Exo+2:wght@300;400;600;700&family=Orbitron:wght@500;700&display=swap" rel="stylesheet" />
+<style>
+:root {
+  --aura: #0887e2;
+  --aura2: #006af5;
+  --fire: #e96d25;
+  --white: #f1f9fe;
+  --black: #000d14;
+  --deep: #001220;
+  --card: rgba(0, 18, 32, 0.88);
+  --line: rgba(8, 135, 226, 0.22);
+  --ok: #22c55e;
+  --pending: #f59e0b;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: 'Exo 2', sans-serif;
+  color: var(--white);
+  background:
+    radial-gradient(circle at 20% 10%, rgba(8, 135, 226, 0.22), transparent 40%),
+    radial-gradient(circle at 90% 75%, rgba(233, 109, 37, 0.16), transparent 35%),
+    linear-gradient(180deg, #000d14 0%, #001220 100%);
+}
+
+.container {
+  width: min(1240px, 92vw);
+  margin: 0 auto;
+  padding: 30px 0 42px;
+}
+
+header { margin-bottom: 20px; }
+
+.kicker {
+  margin: 0;
+  font-family: 'Orbitron', monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--aura);
+}
+
+h1 {
+  margin: 10px 0 8px;
+  font-family: 'Black Han Sans', cursive;
+  font-size: clamp(2rem, 4.8vw, 3.3rem);
+  letter-spacing: 0.03em;
+}
+
+.sub {
+  margin: 0;
+  opacity: 0.78;
+  max-width: 860px;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  gap: 18px;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(10px);
+}
+
+.card-head {
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.card-head h2 {
+  margin: 0;
+  font-family: 'Orbitron', monospace;
+  font-size: 0.92rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--aura);
+}
+
+.card-body { padding: 16px 18px 18px; }
+
+.split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.trainer-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 10px;
+}
+
+.trainer-item {
+  border: 1px solid rgba(8, 135, 226, 0.22);
+  border-radius: 10px;
+  padding: 10px;
+  background: rgba(0, 13, 20, 0.7);
+}
+
+.trainer-item h3 {
+  margin: 0 0 6px;
+  font-size: 1rem;
+}
+
+.trainer-meta {
+  margin: 0;
+  font-size: 0.84rem;
+  opacity: 0.75;
+}
+
+button,
+input,
+select,
+textarea {
+  width: 100%;
+  border-radius: 10px;
+  border: 1px solid rgba(8, 135, 226, 0.25);
+  background: rgba(0, 13, 20, 0.88);
+  color: var(--white);
+  padding: 10px 11px;
+  font-family: inherit;
+}
+
+label {
+  display: block;
+  margin-bottom: 5px;
+  font-size: 0.82rem;
+  opacity: 0.82;
+}
+
+textarea { min-height: 84px; resize: vertical; }
+
+button {
+  border: 0;
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-family: 'Orbitron', monospace;
+  font-weight: 700;
+  background: linear-gradient(120deg, var(--aura2), var(--aura));
+  box-shadow: 0 8px 20px rgba(8, 135, 226, 0.35);
+}
+
+button:hover { filter: brightness(1.1); }
+
+.helper {
+  margin-top: 8px;
+  font-size: 0.82rem;
+  opacity: 0.72;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  text-align: left;
+  padding: 10px 7px;
+  border-bottom: 1px solid rgba(8, 135, 226, 0.16);
+}
+
+th {
+  font-size: 0.88rem;
+  color: rgba(241, 249, 254, 0.75);
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 4px 9px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.pending { background: var(--pending); color: #381b00; }
+.sent { background: var(--ok); color: #04210f; }
+
+.log-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 9px;
+}
+
+.log-item {
+  border: 1px solid rgba(8, 135, 226, 0.2);
+  background: rgba(0, 13, 20, 0.72);
+  border-radius: 10px;
+  padding: 10px;
+}
+
+.meta {
+  margin-top: 4px;
+  font-size: 0.82rem;
+  opacity: 0.74;
+}
+
+.toast {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  background: rgba(34, 197, 94, 0.95);
+  color: #07250f;
+  font-weight: 700;
+  border-radius: 9px;
+  padding: 10px 14px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.46);
+  opacity: 0;
+  transform: translateY(10px);
+  transition: 0.22s ease;
+}
+
+.toast.show { opacity: 1; transform: translateY(0); }
+
+@media (max-width: 980px) {
+  .layout { grid-template-columns: 1fr; }
+  .split { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <p class="kicker">Client Experience Mockup</p>
+      <h1>Reach Trainers And Book Classes</h1>
+      <p class="sub">
+        Client-facing flow for discovering trainers, sending outreach messages, and creating class booking requests.
+        This page is a framework using existing schedule-style data and a local notification/request queue.
+      </p>
+    </header>
+
+    <main class="layout">
+      <section class="card">
+        <div class="card-head">
+          <h2>Trainer Directory</h2>
+        </div>
+        <div class="card-body">
+          <div id="trainerGrid" class="trainer-grid"></div>
+          <p id="trainerSource" class="helper"></p>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <h2>Client Outreach + Booking</h2>
+        </div>
+        <div class="card-body">
+          <form id="clientForm" class="split">
+            <div>
+              <label for="clientName">Your Name</label>
+              <input id="clientName" required placeholder="e.g. Nia Jackson" />
+            </div>
+            <div>
+              <label for="clientEmail">Your Email</label>
+              <input id="clientEmail" type="email" required placeholder="nia@email.com" />
+            </div>
+            <div>
+              <label for="trainerSelect">Trainer</label>
+              <select id="trainerSelect" required></select>
+            </div>
+            <div>
+              <label for="classSelect">Class</label>
+              <select id="classSelect" required></select>
+            </div>
+            <div>
+              <label for="sessionGoal">Goal</label>
+              <input id="sessionGoal" placeholder="Fat loss, strength, mobility..." />
+            </div>
+            <div>
+              <label for="preferredDate">Preferred Start Date</label>
+              <input id="preferredDate" type="date" />
+            </div>
+            <div style="grid-column:1 / -1;">
+              <label for="messageText">Message To Trainer</label>
+              <textarea id="messageText" required placeholder="Hi coach, I want to book this class and work on..."></textarea>
+            </div>
+            <div style="grid-column:1 / -1; display:flex; gap:10px;">
+              <button type="submit">Send Request + Book Class</button>
+              <button type="button" id="clearBtn">Clear My Requests</button>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <h2>Class Schedule Preview</h2>
+        </div>
+        <div class="card-body">
+          <table>
+            <thead>
+              <tr>
+                <th>Class</th>
+                <th>Day</th>
+                <th>Time</th>
+                <th>Trainer</th>
+                <th>Slots</th>
+              </tr>
+            </thead>
+            <tbody id="scheduleBody"></tbody>
+          </table>
+          <p id="scheduleSource" class="helper"></p>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <h2>My Outreach And Booking Requests</h2>
+        </div>
+        <div class="card-body">
+          <ul id="requestList" class="log-list"></ul>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<script>
+(function () {
+  const STORAGE_STATE_KEY = "gymState";
+  const STORAGE_CLIENT_REQUESTS = "clientTrainerBookingRequests";
+
+  const fallbackTrainers = [
+    { id: "t_1", name: "Coach Mike", specialty: "Strength & Powerlifting", experience: "12 years" },
+    { id: "t_2", name: "Sarah Chen", specialty: "HIIT & Functional", experience: "8 years" },
+    { id: "t_3", name: "Aisha Patel", specialty: "Yoga & Mobility", experience: "9 years" }
+  ];
+
+  const fallbackClasses = [
+    { id: "c1", name: "Strength Foundations", day: "Monday", time: "07:00", trainerId: "t_1", memberIds: ["m1", "m2"] },
+    { id: "c2", name: "HIIT Express", day: "Wednesday", time: "18:30", trainerId: "t_2", memberIds: ["m3"] },
+    { id: "c3", name: "Mobility Reset", day: "Friday", time: "17:15", trainerId: "t_3", memberIds: [] }
+  ];
+
+  const ui = {
+    trainerGrid: document.getElementById("trainerGrid"),
+    trainerSource: document.getElementById("trainerSource"),
+    trainerSelect: document.getElementById("trainerSelect"),
+    classSelect: document.getElementById("classSelect"),
+    scheduleBody: document.getElementById("scheduleBody"),
+    scheduleSource: document.getElementById("scheduleSource"),
+    requestList: document.getElementById("requestList"),
+    clientForm: document.getElementById("clientForm"),
+    clearBtn: document.getElementById("clearBtn"),
+    toast: document.getElementById("toast")
+  };
+
+  const state = {
+    trainers: [],
+    classes: [],
+    requests: []
+  };
+
+  function loadData() {
+    let trainerSourceText = "Fallback trainer list loaded.";
+    let scheduleSourceText = "Fallback schedule loaded.";
+
+    try {
+      const raw = localStorage.getItem(STORAGE_STATE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+
+        if (Array.isArray(parsed.users) && parsed.users.length) {
+          const trainerUsers = parsed.users.filter(function (u) { return u.role === "trainer"; });
+          if (trainerUsers.length) {
+            state.trainers = trainerUsers.map(function (u) {
+              return {
+                id: u.id,
+                name: u.name,
+                specialty: "General Coaching",
+                experience: "N/A"
+              };
+            });
+            trainerSourceText = "Loaded trainers from localStorage key: gymState.users";
+          }
+        }
+
+        if (Array.isArray(parsed.classes) && parsed.classes.length) {
+          state.classes = parsed.classes;
+          scheduleSourceText = "Loaded classes from localStorage key: gymState.classes";
+        }
+      }
+    } catch (error) {
+      trainerSourceText = "Could not read saved data. Using fallback trainers.";
+      scheduleSourceText = "Could not read saved data. Using fallback classes.";
+    }
+
+    if (!state.trainers.length) state.trainers = fallbackTrainers.slice();
+    if (!state.classes.length) state.classes = fallbackClasses.slice();
+
+    state.requests = loadRequests();
+    ui.trainerSource.textContent = trainerSourceText;
+    ui.scheduleSource.textContent = scheduleSourceText;
+  }
+
+  function loadRequests() {
+    try {
+      const raw = localStorage.getItem(STORAGE_CLIENT_REQUESTS);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (error) {
+      return [];
+    }
+  }
+
+  function saveRequests() {
+    localStorage.setItem(STORAGE_CLIENT_REQUESTS, JSON.stringify(state.requests));
+  }
+
+  function trainerNameById(id) {
+    const trainer = state.trainers.find(function (t) { return t.id === id; });
+    return trainer ? trainer.name : "Unassigned";
+  }
+
+  function renderTrainerCards() {
+    ui.trainerGrid.innerHTML = "";
+    state.trainers.forEach(function (trainer) {
+      const card = document.createElement("article");
+      card.className = "trainer-item";
+      card.innerHTML =
+        "<h3>" + esc(trainer.name) + "</h3>" +
+        "<p class=\"trainer-meta\">Specialty: " + esc(trainer.specialty || "General Coaching") + "</p>" +
+        "<p class=\"trainer-meta\">Experience: " + esc(trainer.experience || "N/A") + "</p>" +
+        "<div style=\"margin-top:9px;\"><button type=\"button\" data-trainer-id=\"" + esc(trainer.id) + "\">Reach Out</button></div>";
+      ui.trainerGrid.appendChild(card);
+    });
+
+    ui.trainerGrid.querySelectorAll("button[data-trainer-id]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        const trainerId = btn.getAttribute("data-trainer-id");
+        ui.trainerSelect.value = trainerId;
+        document.getElementById("messageText").focus();
+      });
+    });
+  }
+
+  function renderSelectors() {
+    ui.trainerSelect.innerHTML = "";
+    state.trainers.forEach(function (trainer) {
+      const opt = document.createElement("option");
+      opt.value = trainer.id;
+      opt.textContent = trainer.name;
+      ui.trainerSelect.appendChild(opt);
+    });
+
+    ui.classSelect.innerHTML = "";
+    state.classes.forEach(function (gymClass) {
+      const opt = document.createElement("option");
+      opt.value = gymClass.id;
+      opt.textContent = gymClass.name + " - " + gymClass.day + " @ " + gymClass.time;
+      ui.classSelect.appendChild(opt);
+    });
+  }
+
+  function renderSchedule() {
+    ui.scheduleBody.innerHTML = "";
+
+    state.classes.forEach(function (gymClass) {
+      const slotsUsed = (gymClass.memberIds || []).length;
+      const row = document.createElement("tr");
+      row.innerHTML =
+        "<td>" + esc(gymClass.name) + "</td>" +
+        "<td>" + esc(gymClass.day) + "</td>" +
+        "<td>" + esc(gymClass.time) + "</td>" +
+        "<td>" + esc(trainerNameById(gymClass.trainerId)) + "</td>" +
+        "<td>" + slotsUsed + " booked</td>";
+      ui.scheduleBody.appendChild(row);
+    });
+  }
+
+  function renderRequests() {
+    ui.requestList.innerHTML = "";
+
+    if (!state.requests.length) {
+      const item = document.createElement("li");
+      item.className = "log-item";
+      item.textContent = "No outreach or class booking requests yet.";
+      ui.requestList.appendChild(item);
+      return;
+    }
+
+    state.requests.slice(0, 10).forEach(function (request) {
+      const item = document.createElement("li");
+      item.className = "log-item";
+      const created = new Date(request.createdAt).toLocaleString();
+      item.innerHTML =
+        "<div><strong>" + esc(request.client.name) + "</strong> to <strong>" + esc(request.trainer.name) + "</strong>" +
+        " <span class=\"pill " + (request.status === "sent" ? "sent" : "pending") + "\">" + esc(request.status) + "</span></div>" +
+        "<div class=\"meta\">Class: " + esc(request.classSession.name) + " (" + esc(request.classSession.day) + " " + esc(request.classSession.time) + ")</div>" +
+        "<div class=\"meta\">Goal: " + esc(request.goal || "Not specified") + "</div>" +
+        "<div class=\"meta\">Message: " + esc(request.message) + "</div>" +
+        "<div class=\"meta\">Request ID: " + esc(request.id) + " | " + esc(created) + "</div>";
+      ui.requestList.appendChild(item);
+    });
+  }
+
+  function bookAndNotify(event) {
+    event.preventDefault();
+
+    const clientName = document.getElementById("clientName").value.trim();
+    const clientEmail = document.getElementById("clientEmail").value.trim();
+    const trainerId = ui.trainerSelect.value;
+    const classId = ui.classSelect.value;
+    const goal = document.getElementById("sessionGoal").value.trim();
+    const preferredDate = document.getElementById("preferredDate").value;
+    const messageText = document.getElementById("messageText").value.trim();
+
+    const trainer = state.trainers.find(function (t) { return t.id === trainerId; });
+    const classSession = state.classes.find(function (c) { return c.id === classId; });
+
+    if (!trainer || !classSession) {
+      showToast("Trainer or class selection is invalid.");
+      return;
+    }
+
+    const newRequest = {
+      id: "req_" + Date.now() + "_" + Math.random().toString(16).slice(2, 7),
+      type: "CLIENT_TRAINER_OUTREACH_AND_BOOKING",
+      createdAt: new Date().toISOString(),
+      status: "pending",
+      client: {
+        name: clientName,
+        email: clientEmail,
+        preferredStartDate: preferredDate || null
+      },
+      trainer: {
+        id: trainer.id,
+        name: trainer.name
+      },
+      classSession: {
+        id: classSession.id,
+        name: classSession.name,
+        day: classSession.day,
+        time: classSession.time
+      },
+      goal: goal,
+      message: messageText,
+      dispatch: {
+        inApp: { status: "queued" },
+        email: { status: "queued" }
+      }
+    };
+
+    state.requests.unshift(newRequest);
+
+    if (!Array.isArray(classSession.memberIds)) {
+      classSession.memberIds = [];
+    }
+    classSession.memberIds.push("client_" + Date.now());
+
+    saveRequests();
+    renderSchedule();
+    renderRequests();
+
+    ui.clientForm.reset();
+    newRequest.status = "sent";
+    showToast("Request sent to trainer and class booking saved.");
+  }
+
+  function clearRequests() {
+    state.requests = [];
+    saveRequests();
+    renderRequests();
+    showToast("All client requests cleared.");
+  }
+
+  function showToast(message) {
+    ui.toast.textContent = message;
+    ui.toast.classList.add("show");
+    setTimeout(function () {
+      ui.toast.classList.remove("show");
+    }, 2200);
+  }
+
+  function esc(value) {
+    return String(value || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/\"/g, "&quot;")
+      .replace(/'/g, "&#039;");
+  }
+
+  function init() {
+    loadData();
+    renderTrainerCards();
+    renderSelectors();
+    renderSchedule();
+    renderRequests();
+
+    ui.clientForm.addEventListener("submit", bookAndNotify);
+    ui.clearBtn.addEventListener("click", clearRequests);
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>
