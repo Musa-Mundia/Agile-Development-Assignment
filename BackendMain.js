@@ -18,7 +18,6 @@ const firebaseConfig = {
   appId: "1:143443368712:web:0f79e0f8f613773ab46abd"
 };
 
-
 firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
 const db   = firebase.database();
@@ -386,6 +385,46 @@ function addToCart(item) {
   _updateCartBadge();
 }
 
+/** Set a cart item's quantity (removes item if qty <= 0). */
+function setCartItemQty(itemId, qty) {
+  const cart = getCart();
+  const item = cart.find(c => c.id === itemId);
+  if (!item) return;
+  const q = parseInt(qty, 10) || 0;
+  if (q <= 0) {
+    _saveCart(cart.filter(c => c.id !== itemId));
+  } else {
+    item.qty = q;
+    _saveCart(cart);
+  }
+  _updateCartBadge();
+}
+
+/** Increment a cart item's quantity by 1. */
+function incrementCartItem(itemId) {
+  const cart = getCart();
+  const item = cart.find(c => c.id === itemId);
+  if (!item) return;
+  item.qty = (item.qty || 1) + 1;
+  _saveCart(cart);
+  _updateCartBadge();
+}
+
+/** Decrement a cart item's quantity by 1 (removes at zero). */
+function decrementCartItem(itemId) {
+  const cart = getCart();
+  const item = cart.find(c => c.id === itemId);
+  if (!item) return;
+  const next = (item.qty || 1) - 1;
+  if (next <= 0) {
+    _saveCart(cart.filter(c => c.id !== itemId));
+  } else {
+    item.qty = next;
+    _saveCart(cart);
+  }
+  _updateCartBadge();
+}
+
 /**
  * Remove an item from the cart by id.
  * @param {string} itemId
@@ -616,15 +655,173 @@ async function getMeals(clientId) {
  */
 async function getMembership(userId) {
   const snap = await db.ref("memberships").orderByChild("clientId").equalTo(userId).once("value");
-  if (!snap.exists()) return null;
+  const now = Date.now();
+  const oneDay = 24 * 60 * 60 * 1000;
+  const plans = await getMembershipPlans().catch(() => []);
+
+  function rankFromNameAndPrice(name, price) {
+    const n = String(name || "").toLowerCase();
+    if (n.includes("starter")) return 1;
+    if (n.includes("core")) return 2;
+    if (n.includes("elite")) return 3;
+    return Number(price) || 0;
+  }
+
+  function membershipRank(m) {
+    const linkedPlan = plans.find(p => p.id === m.planId)
+      || plans.find(p => String(p.name || "").toLowerCase() === String(m.type || "").toLowerCase())
+      || null;
+    return rankFromNameAndPrice(linkedPlan?.name || m.type, linkedPlan?.price ?? m.price);
+  }
+
+  function membershipRecency(m) {
+    return m.upgradedAt || m.updatedAt || m.startedAt || m.createdAt || 0;
+  }
+
+  if (!snap.exists()) {
+    const paid = await getClientMembershipPayments(userId).catch(() => []);
+    const latestPaid = paid.find(p => (p.status || "paid") === "paid");
+    if (!latestPaid) return null;
+
+    const paidPlan = plans.find(p => p.id === latestPaid.planId)
+      || plans.find(p => String(p.name || "").toLowerCase() === String(latestPaid.planName || latestPaid.membershipType || "").toLowerCase())
+      || null;
+
+    const startedAt = Number(latestPaid.createdAt) || now;
+    const durationDays = Number(latestPaid.durationDays) || Number(paidPlan?.durationDays) || 30;
+    const expiresAt = startedAt + durationDays * oneDay;
+
+    if (expiresAt < now) return null;
+
+    const recoveredId = await createMembership({
+      clientId: userId,
+      planId: latestPaid.planId || paidPlan?.id || "",
+      type: latestPaid.planName || latestPaid.membershipType || paidPlan?.name || "Membership",
+      status: "active",
+      startedAt,
+      durationDays,
+      expiresAt,
+      price: Number(latestPaid.planPrice) || Number(paidPlan?.price) || Number(latestPaid.amount) || 0,
+      paymentMethod: latestPaid.method || "card",
+      recoveredAt: now,
+      recoveryReason: "Recovered from payment history (membership record missing)"
+    });
+
+    if (latestPaid.id) {
+      await db.ref("membership_payments/" + latestPaid.id).update({
+        membershipId: recoveredId,
+        updatedAt: now
+      }).catch(() => {});
+    }
+
+    return {
+      id: recoveredId,
+      clientId: userId,
+      planId: latestPaid.planId || paidPlan?.id || "",
+      type: latestPaid.planName || latestPaid.membershipType || paidPlan?.name || "Membership",
+      status: "active",
+      startedAt,
+      durationDays,
+      expiresAt,
+      price: Number(latestPaid.planPrice) || Number(paidPlan?.price) || Number(latestPaid.amount) || 0,
+      paymentMethod: latestPaid.method || "card"
+    };
+  }
 
   const all = [];
   snap.forEach(child => all.push({ id: child.key, ...child.val() }));
 
-  all.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-  const now = Date.now();
-  const active = all.find(m => (m.status || "active") === "active" && (!m.expiresAt || m.expiresAt >= now));
-  return active || all[0] || null;
+  all.sort((a, b) => membershipRecency(b) - membershipRecency(a));
+
+  const activeCandidates = all.filter(m => (m.status || "active") === "active" && (!m.expiresAt || m.expiresAt >= now));
+  if (activeCandidates.length) {
+    activeCandidates.sort((a, b) => {
+      const rankDiff = membershipRank(b) - membershipRank(a);
+      if (rankDiff !== 0) return rankDiff;
+      return membershipRecency(b) - membershipRecency(a);
+    });
+
+    const chosen = activeCandidates[0];
+
+    // Heal duplicate actives so UI and billing always use one authoritative active plan.
+    for (const extra of activeCandidates.slice(1)) {
+      await updateMembership(extra.id, {
+        status: "cancelled",
+        cancelledAt: now,
+        cancelReason: "Superseded by higher-tier or newer active membership"
+      }).catch(() => {});
+    }
+
+    return chosen;
+  }
+
+  // No active candidates — try payment-linked recovery only.
+  // (The old "recoverable" path that blindly reactivated any non-cancelled record
+  //  has been removed because it was resurrecting stale/garbage records from old test runs.)
+  const paid = await getClientMembershipPayments(userId).catch(() => []);
+  const paidWithMembership = paid.find(p => (p.status || "paid") === "paid" && p.membershipId);
+  if (paidWithMembership) {
+    const paidMembership = all.find(m => m.id === paidWithMembership.membershipId);
+    if (paidMembership && (!paidMembership.expiresAt || paidMembership.expiresAt >= now)) {
+      if ((paidMembership.status || "").toLowerCase() !== "active") {
+        await updateMembership(paidMembership.id, {
+          status: "active",
+          recoveredAt: now,
+          recoveryReason: "Recovered from paid membership record"
+        }).catch(() => {});
+      }
+      return { ...paidMembership, status: "active" };
+    }
+  }
+
+  const latestPaid = paid.find(p => (p.status || "paid") === "paid");
+  if (latestPaid) {
+    const paidPlan = plans.find(p => p.id === latestPaid.planId)
+      || plans.find(p => String(p.name || "").toLowerCase() === String(latestPaid.planName || latestPaid.membershipType || "").toLowerCase())
+      || null;
+
+    const startedAt = Number(latestPaid.createdAt) || now;
+    const durationDays = Number(latestPaid.durationDays) || Number(paidPlan?.durationDays) || 30;
+    const expiresAt = startedAt + durationDays * oneDay;
+
+    if (expiresAt >= now) {
+      const recoveredId = await createMembership({
+        clientId: userId,
+        planId: latestPaid.planId || paidPlan?.id || "",
+        type: latestPaid.planName || latestPaid.membershipType || paidPlan?.name || "Membership",
+        status: "active",
+        startedAt,
+        durationDays,
+        expiresAt,
+        price: Number(latestPaid.planPrice) || Number(paidPlan?.price) || Number(latestPaid.amount) || 0,
+        paymentMethod: latestPaid.method || "card",
+        recoveredAt: now,
+        recoveryReason: "Recovered from payment history (membership status stale)"
+      });
+
+      if (latestPaid.id) {
+        await db.ref("membership_payments/" + latestPaid.id).update({
+          membershipId: recoveredId,
+          updatedAt: now
+        }).catch(() => {});
+      }
+
+      return {
+        id: recoveredId,
+        clientId: userId,
+        planId: latestPaid.planId || paidPlan?.id || "",
+        type: latestPaid.planName || latestPaid.membershipType || paidPlan?.name || "Membership",
+        status: "active",
+        startedAt,
+        durationDays,
+        expiresAt,
+        price: Number(latestPaid.planPrice) || Number(paidPlan?.price) || Number(latestPaid.amount) || 0,
+        paymentMethod: latestPaid.method || "card"
+      };
+    }
+  }
+
+  return all[0] || null;
 }
 
 // ============================================================
@@ -1402,6 +1599,21 @@ async function recordTransaction(txn) {
   return ref.key;
 }
 
+async function createStorePurchase(clientId, data) {
+  const ref = db.ref("store_purchases/" + clientId).push();
+  await ref.set({ ...data, createdAt: Date.now() });
+  return ref.key;
+}
+
+async function getClientStorePurchases(clientId) {
+  const snap = await db.ref("store_purchases/" + clientId).once("value");
+  if (!snap.exists()) return [];
+  const result = [];
+  snap.forEach(child => result.push({ id: child.key, ...child.val() }));
+  result.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  return result;
+}
+
 /**
  * Fetch all financial transactions.
  * @returns {Array<Object>}
@@ -2136,7 +2348,7 @@ async function initClientPage() {
     // Card clicks
     _bindCardToPanel("card-cart",       "panel-cart");
     _bindCardToPanel("card-workouts",   "panel-workouts");
-    _bindCardToPanel("card-membership", "panel-membership");
+    _bindCardToPanelWithReload("card-membership", "panel-membership", () => _loadClientMembershipPanel(user.uid));
     _bindCardToPanel("card-progress",   "panel-progress");
     _bindCardToPanel("card-biography",  "panel-biography");
     _bindCardToPanel("card-store",      "panel-pick-trainer");
@@ -2150,6 +2362,11 @@ async function initClientPage() {
     // Sidebar nav for booking must also reload
     document.querySelectorAll('.nav-item[data-panel="panel-booking"]').forEach(item => {
       item.addEventListener('click', () => _loadClientBookingPanel(user.uid, profile.name));
+    });
+
+    // Membership: reload on every open (card OR sidebar nav)
+    document.querySelectorAll('.nav-item[data-panel="panel-membership"]').forEach(item => {
+      item.addEventListener('click', () => _loadClientMembershipPanel(user.uid));
     });
 
     // Load panels content
@@ -2828,326 +3045,453 @@ async function _loadClientMembershipPanel(clientId) {
   const panel = document.getElementById("panel-membership");
   if (!panel) return;
 
-  panel.innerHTML = "<h2 style='color:#0887e2'>Membership Hub</h2><p>Loading memberships...</p>";
+  panel.innerHTML = "<h2 style='color:#0887e2'>Membership Hub</h2><p style='opacity:0.6'>Loading…</p>";
 
-  const oneDay = 24 * 60 * 60 * 1000;
-  const toMoney = (n) => `£${(Number(n) || 0).toFixed(2)}`;
-  const daysLeft = (ts) => Math.max(0, Math.ceil(((ts || 0) - Date.now()) / oneDay));
+  const ONE_DAY = 86400000;
+  const CANCEL_WINDOW = 2 * ONE_DAY;
+  const money = n => `£${(Number(n) || 0).toFixed(2)}`;
+  const el = id => document.getElementById(id);
+
+  // Tier rank: higher number = higher tier. Falls back to 0 for unknown plans.
+  function tierRank(nameOrType) {
+    const n = String(nameOrType || "").toLowerCase();
+    if (n.includes("elite"))  return 3;
+    if (n.includes("core"))   return 2;// Update: hardcoded values for known tiers, admin generated tiers would te treated diffrently
+    if (n.includes("start"))  return 1;
+    return 0;
+  }
 
   try {
-    const [membership, plans, payments] = await Promise.all([
-      getMembership(clientId),
+    // Always fetch fresh — no stale closure data.
+    // getClientMembershipPayments uses orderByChild which works without .indexOn (just a console warning).
+    // getAllMemberships + filter is used for memberships since it reliably returns all records.
+    const [plans, payments, allMembsRaw] = await Promise.all([
       getMembershipPlans(),
-      getClientMembershipPayments(clientId)
+      getClientMembershipPayments(clientId),
+      getAllMemberships()
     ]);
+    const allMembs = allMembsRaw.filter(m => m.clientId === clientId);
+    payments.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 
-    const activeMembership = membership && (membership.status || "active") === "active" && (!membership.expiresAt || membership.expiresAt >= Date.now())
-      ? membership
+    const now = Date.now();
+
+    // Build displayPayments: real payments + synthesized entries for memberships
+    // whose payment record was never written (e.g. created via getMembership recovery path).
+    // We only synthesize for non-cancelled memberships that have no matching payment at all.
+    function buildDisplayPayments(memList, payList) {
+      const dp = [...payList];
+      for (const m of memList) {
+        const s = String(m.status || "active").toLowerCase();
+        if (s === "cancelled" || s === "canceled") continue;
+        if (payList.some(p => p.membershipId === m.id)) continue; // real payment exists
+        // Charge amount: for upgrades = difference; for new = full plan price
+        const synthAmt = m.upgradeFromPrice
+          ? Math.max(0, (Number(m.price) || 0) - (Number(m.upgradeFromPrice) || 0))
+          : (Number(m.price) || 0);
+        dp.push({
+          _synthetic: true,
+          planName: m.type,
+          amount: synthAmt,
+          method: m.paymentMethod || "card",
+          maskedCard: "",
+          paymentReason: m.upgradeFromType ? "upgrade_difference" : "new_membership",
+          createdAt: m.upgradedAt || m.startedAt || now
+        });
+      }
+      dp.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+      return dp;
+    }
+    // displayPayments is built after activeMembs is determined (needs allMembs)
+    // We'll build it below once we have allMembs ready.
+
+    // Collect genuinely active (not expired, not cancelled)
+    const activeMembs = allMembs.filter(m => {
+      const s = String(m.status || "active").toLowerCase();
+      return s === "active" && (!m.expiresAt || m.expiresAt >= now);
+    });
+
+    // Sort: highest tier first, then most recent
+    activeMembs.sort((a, b) => {
+      const rd = tierRank(b.type) - tierRank(a.type);
+      if (rd !== 0) return rd;
+      return ((b.upgradedAt || b.startedAt || b.createdAt || 0) - (a.upgradedAt || a.startedAt || a.createdAt || 0));
+    });
+
+    // Auto-heal any duplicate actives (keep best one, cancel rest)
+    if (activeMembs.length > 1) {
+      for (const dup of activeMembs.slice(1)) {
+        await updateMembership(dup.id, { status: "cancelled", cancelledAt: now, cancelReason: "Duplicate active healed" }).catch(() => {});
+      }
+    }
+
+    const activeMem = activeMembs[0] || null;
+    const activePlan = activeMem
+      ? (plans.find(p => p.id === activeMem.planId)
+          || plans.find(p => String(p.name || "").toLowerCase() === String(activeMem.type || "").toLowerCase())
+          || { id: null, name: activeMem.type, price: activeMem.price, durationDays: 30, features: [], description: "" })
       : null;
+    const activeRank  = tierRank(activeMem?.type);
+    const activePlanPrice = Number(activePlan?.price) || 0;
+    const canCancel   = !!(activeMem && activeMem.startedAt && (now - activeMem.startedAt) <= CANCEL_WINDOW);
+    const daysLeft    = activeMem?.expiresAt ? Math.max(0, Math.ceil((activeMem.expiresAt - now) / ONE_DAY)) : 0;
 
-    const daysRemaining = activeMembership ? daysLeft(activeMembership.expiresAt) : 0;
-    const expiryWarning = activeMembership && daysRemaining <= 7
-      ? `<div style="margin-bottom:14px;padding:12px 18px;border-radius:10px;
-          background:rgba(255,80,0,0.12);border:1px solid rgba(255,80,0,0.35);
-          display:flex;align-items:center;gap:12px">
-          <span style="font-size:1.3rem">⚠️</span>
-          <div>
-            <strong style="color:#e96d25">Membership Expiring Soon</strong>
-            <div style="font-size:0.84rem;opacity:0.8">
-              Your ${activeMembership.type || "membership"} expires in
-              <strong style="color:#e96d25">${daysRemaining} day${daysRemaining !== 1 ? "s" : ""}</strong>.
-              Renew below to keep your access.
-            </div>
-          </div>
-        </div>`
-      : "";
+    const displayPayments = buildDisplayPayments(allMembs, payments);
 
-    const tierColors = { "Elite": "#7c4dff", "Core": "#0887e2", "Starter": "#00c853" };
-    const tierColor = activeMembership ? (tierColors[activeMembership.type] || "#0887e2") : "#ff0033";
+    const TIER_COL = { elite: "#7c4dff", core: "#0887e2", start: "#00c853" };
+    const tierColKey = activeMem ? Object.keys(TIER_COL).find(k => String(activeMem.type || "").toLowerCase().includes(k)) : null;
+    const tierCol = tierColKey ? TIER_COL[tierColKey] : (activeMem ? "#0887e2" : "#555");
 
+    // ── Render shell ──────────────────────────────────────────────────────────
     panel.innerHTML = `
-      <h2 style="color:#0887e2">Membership Hub</h2>
+      <h2 style="color:#0887e2;margin-bottom:20px">Membership Hub</h2>
 
-      ${expiryWarning}
+      ${(activeMem && daysLeft <= 7 && daysLeft > 0) ? `
+        <div style="margin-bottom:16px;padding:12px 18px;border-radius:10px;background:rgba(255,80,0,0.12);border:1px solid rgba(255,80,0,0.35);display:flex;align-items:center;gap:12px">
+          <span style="font-size:1.3rem">⚠️</span>
+          <div><strong style="color:#e96d25">Expiring in ${daysLeft} day${daysLeft !== 1 ? "s" : ""}</strong> — your ${activeMem.type} membership. Renew below.</div>
+        </div>` : ""}
 
-      <div class="card" style="margin-bottom:20px;cursor:default;border-left:3px solid ${tierColor}">
+      <div class="card" style="margin-bottom:20px;cursor:default;border-left:4px solid ${tierCol}">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap">
           <div>
-            <h3 style="margin-bottom:8px">
-              ${activeMembership ? (activeMembership.type || "Membership") : "No Active Membership"}
-              ${activeMembership ? `<span style="display:inline-block;margin-left:8px;padding:2px 10px;border-radius:20px;font-size:0.7rem;font-weight:700;background:${tierColor}22;color:${tierColor}">${activeMembership.type ? activeMembership.type.toUpperCase() : "MEMBER"}</span>` : ""}
+            <h3 style="margin-bottom:6px">
+              ${activeMem ? activeMem.type || "Membership" : "No Active Membership"}
+              <span style="display:inline-block;margin-left:8px;padding:2px 10px;border-radius:20px;font-size:0.7rem;font-weight:700;background:${tierCol}22;color:${tierCol}">
+                ${activeMem ? "ACTIVE" : "INACTIVE"}
+              </span>
             </h3>
-            <p style="opacity:0.78">Status:
-              <strong style="color:${activeMembership ? "#00c850" : "#ff0033"};text-transform:uppercase">
-                ${activeMembership ? "active" : "inactive"}
-              </strong>
-            </p>
-            <p style="opacity:0.78">Expiry: ${activeMembership ? formatDate(activeMembership.expiresAt) : "—"}</p>
-            <p style="opacity:0.78">Days Left: <strong style="color:${daysRemaining <= 7 && activeMembership ? "#e96d25" : "inherit"}">${daysRemaining}</strong></p>
+            <p style="opacity:0.78;margin:3px 0">Expiry: <strong>${activeMem?.expiresAt ? formatDate(activeMem.expiresAt) : "—"}</strong></p>
+            <p style="opacity:0.78;margin:3px 0">Days Left: <strong style="color:${daysLeft <= 7 && activeMem ? "#e96d25" : "inherit"}">${activeMem ? daysLeft : "—"}</strong></p>
+            ${activeMem ? `<p style="opacity:0.78;margin:3px 0">Price: <strong>${money(activeMem.price || activePlanPrice)}</strong></p>` : ""}
           </div>
-          <div style="text-align:right;display:flex;flex-direction:column;align-items:flex-end;gap:10px">
-            <div>
-              <div style="font-size:0.82rem;opacity:0.65">Latest Payment</div>
-              <div style="font-size:1.4rem;font-weight:700;color:#e96d25">${payments[0] ? toMoney(payments[0].amount) : "—"}</div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:10px">
+            <div style="text-align:right">
+              <div style="font-size:0.82rem;opacity:0.65">Last Payment</div>
+              <div style="font-size:1.4rem;font-weight:700;color:#e96d25">${displayPayments[0] ? money(displayPayments[0].amount) : "—"}</div>
             </div>
-            ${activeMembership ? `<button id="cm-cancel-membership-btn"
-              style="padding:7px 16px;border:1px solid rgba(255,0,51,0.4);border-radius:8px;
-              background:transparent;color:#ff5577;cursor:pointer;font-family:inherit;font-size:0.82rem">
-              Cancel Membership
-            </button>` : ""}
+            ${activeMem ? `
+              <button id="cm-cancel-mem-btn"
+                style="padding:7px 16px;border:1px solid rgba(255,0,51,0.5);border-radius:8px;background:transparent;
+                color:#ff5577;font-family:inherit;font-size:0.82rem;cursor:${canCancel ? "pointer" : "not-allowed"};opacity:${canCancel ? 1 : 0.5}">
+                ${canCancel ? "Cancel Membership" : "Cancellation Window Closed"}
+              </button>
+              <div style="font-size:0.74rem;opacity:0.55;text-align:right;max-width:220px">
+                ${canCancel ? "Cancellable within 2 days of activation." : "2-day cancellation window has passed."}
+              </div>` : ""}
           </div>
         </div>
       </div>
 
-      <div class="card" style="margin-bottom:16px;cursor:default">
+      <div class="card" style="margin-bottom:14px;cursor:default">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
-          <h3 style="margin:0">Search & Purchase Memberships</h3>
-          <input id="cm-search" type="text" placeholder="Search plan name, features, duration"
-            style="min-width:260px;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:inherit;font-family:inherit">
+          <h3 style="margin:0">Available Plans</h3>
+          <input id="cm-search" type="text" placeholder="Search plans…"
+            style="min-width:220px;padding:9px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:inherit;font-family:inherit">
         </div>
       </div>
 
-      <div id="cm-plans-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:14px;margin-bottom:16px"></div>
-      <div id="cm-checkout"></div>
+      <div id="cm-plans-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px;margin-bottom:16px"></div>
+      <div id="cm-checkout-area"></div>
 
       <div class="card" style="margin-top:20px;cursor:default">
         <h3 style="margin-bottom:12px">Payment History</h3>
-        <div id="cm-payments-list"></div>
+        <div id="cm-pay-history"></div>
       </div>
     `;
 
-    // Cancel membership handler
-    const cancelMemBtn = document.getElementById("cm-cancel-membership-btn");
-    if (cancelMemBtn && activeMembership) {
+    // ── Cancel handler ────────────────────────────────────────────────────────
+    const cancelMemBtn = el("cm-cancel-mem-btn");
+    if (cancelMemBtn && activeMem) {
       cancelMemBtn.addEventListener("click", () => {
+        if (!canCancel) { showToast("Cancellation window has passed (2 days from activation).", "error"); return; }
         showModal("Cancel Membership",
-          `<p>Are you sure you want to cancel your <strong>${activeMembership.type || "membership"}</strong>?</p>
-           <p style="opacity:0.7;font-size:0.88rem">Access will remain until <strong>${formatDate(activeMembership.expiresAt)}</strong>.</p>`,
+          `<p>Cancel your <strong>${activeMem.type || "membership"}</strong>? This will end your access immediately.</p>`,
           async () => {
             try {
-              await updateMembership(activeMembership.id, {
-                status: "cancelled",
-                cancelledAt: Date.now(),
-                cancelReason: "Cancelled by client"
+              await updateMembership(activeMem.id, {
+                status: "cancelled", cancelledAt: Date.now(),
+                cancelReason: "Cancelled by client within 2-day window", expiresAt: Date.now()
               });
-              showToast("Membership cancelled. Access remains until expiry.", "info");
+              showToast("Membership cancelled.", "info");
               _loadClientMembershipPanel(clientId);
-            } catch (e) { showToast(e.message, "error"); }
+            } catch (err) { showToast(err.message, "error"); }
           }
         );
       });
     }
 
-    const plansGrid = document.getElementById("cm-plans-grid");
-    const checkout  = document.getElementById("cm-checkout");
-    const payList   = document.getElementById("cm-payments-list");
-    const searchInp = document.getElementById("cm-search");
-
-    function renderPayments() {
-      if (!payments.length) {
-        payList.innerHTML = "<p style='opacity:0.65'>No membership payments yet.</p>";
-        return;
+    // ── Payment history ───────────────────────────────────────────────────────
+    const payHistEl = el("cm-pay-history");
+    if (payHistEl) {
+      if (!displayPayments.length) {
+        payHistEl.innerHTML = "<p style='opacity:0.65'>No payments yet.</p>";
+      } else {
+        payHistEl.innerHTML = displayPayments.slice(0, 10).map(p => `
+          <div style="display:flex;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.08)">
+            <div>
+              <strong style="font-size:0.9rem">${p.planName || p.membershipType || "Membership"}</strong>
+              <span style="margin-left:8px;opacity:0.6;font-size:0.8rem">${
+                p.paymentReason === "upgrade_difference" ? "Upgrade" :
+                p.paymentReason === "cancel_refund"     ? "Refund"  : "Purchase"}</span>
+              ${p._synthetic ? "<span style='margin-left:6px;font-size:0.72rem;color:#aaa;opacity:0.7'>(no receipt)</span>" : ""}
+              <div style="font-size:0.78rem;opacity:0.55">${p.method || "card"}${p.maskedCard ? " · " + p.maskedCard : ""}</div>
+            </div>
+            <div style="text-align:right">
+              <div style="font-weight:700;color:${p.paymentReason === "cancel_refund" ? "#00c853" : "#e96d25"}">${money(p.amount)}</div>
+              <div style="font-size:0.78rem;opacity:0.6">${formatDate(p.createdAt)}</div>
+            </div>
+          </div>`).join("");
       }
-      payList.innerHTML = payments.slice(0, 8).map(p => `
-        <div style="display:flex;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.08)">
-          <span style="opacity:0.78">${p.planName || p.membershipType || "Membership"} · ${p.method || "card"}</span>
-          <span><strong>${toMoney(p.amount)}</strong> · <span style="opacity:0.6">${formatDate(p.createdAt)}</span></span>
-        </div>
-      `).join("");
     }
 
-    async function renderCheckout(plan) {
-      if (!plan) {
-        checkout.innerHTML = "";
-        return;
-      }
-
-      checkout.innerHTML = `<div style="text-align:center;padding:14px;opacity:0.5">Loading payment options…</div>`;
-
-      let savedCards = [];
-      try { savedCards = await getPaymentCards(clientId); } catch (e) { /* no cards yet */ }
-      const defaultCard = savedCards.find(c => c.isDefault) || savedCards[0] || null;
-
-      const iStyle = `padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:inherit;font-family:inherit;width:100%;box-sizing:border-box`;
-
-      checkout.innerHTML = `
-        <div class="card" style="cursor:default">
-          <h3 style="margin-bottom:8px">Checkout — ${plan.name}</h3>
-          <p style="opacity:0.72;margin-bottom:12px">Duration: ${plan.durationDays || 30} days · Total: <strong>${toMoney(plan.price)}</strong></p>
-
-          ${defaultCard ? `
-            <div style="margin-bottom:12px;padding:10px 14px;border-radius:8px;background:rgba(8,165,226,0.08);border:1px solid rgba(8,165,226,0.3)">
-              <div style="font-size:0.82rem;opacity:0.65;margin-bottom:3px">Using saved card:</div>
-              <strong style="font-size:0.92rem">${defaultCard.cardHolder} — •••• ${defaultCard.last4} (${defaultCard.expiry})</strong>
-              <div style="margin-top:6px"><label style="font-size:0.8rem;cursor:pointer"><input type="checkbox" id="cm-use-new"> Use a different card</label></div>
-            </div>
-          ` : ""}
-
-          <div id="cm-new-card-section" style="${defaultCard ? "display:none" : ""}">
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
-              <input id="cm-card-name" type="text" placeholder="Cardholder Name" style="${iStyle}">
-              <input id="cm-card-number" type="text" placeholder="Card Number" maxlength="19" style="${iStyle}">
-              <input id="cm-card-exp" type="text" placeholder="MM/YY" maxlength="5" style="${iStyle}">
-              <input id="cm-card-cvc" type="password" placeholder="CVC" maxlength="4" style="${iStyle}">
-            </div>
-            <label style="font-size:0.82rem;cursor:pointer;display:flex;align-items:center;gap:6px;margin-bottom:10px">
-              <input type="checkbox" id="cm-save-card"> Save this card for future payments
-            </label>
-          </div>
-
-          <div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap">
-            <button id="cm-pay-btn" style="padding:10px 20px;border:none;border-radius:8px;background:linear-gradient(90deg,#00c853,#009944);color:#fff;cursor:pointer;font-weight:700">Pay & Activate</button>
-            <button id="cm-cancel-btn" style="padding:10px 20px;border:1px solid rgba(255,255,255,0.2);border-radius:8px;background:transparent;color:inherit;cursor:pointer">Cancel</button>
-          </div>
-        </div>
-      `;
-
-      if (defaultCard) {
-        document.getElementById("cm-use-new").addEventListener("change", e => {
-          document.getElementById("cm-new-card-section").style.display = e.target.checked ? "block" : "none";
-        });
-      }
-
-      // Card number auto-spacing (groups of 4)
-      const cardNumEl = document.getElementById("cm-card-number");
-      if (cardNumEl) {
-        cardNumEl.addEventListener("input", () => {
-          let v = cardNumEl.value.replace(/\D/g, "").slice(0, 16);
-          cardNumEl.value = v.replace(/(.{4})/g, "$1 ").trim();
-        });
-      }
-      // Expiry auto-slash
-      const cardExpEl = document.getElementById("cm-card-exp");
-      if (cardExpEl) {
-        cardExpEl.addEventListener("input", () => {
-          let v = cardExpEl.value.replace(/\D/g, "").slice(0, 4);
-          if (v.length >= 3) v = v.slice(0, 2) + "/" + v.slice(2);
-          cardExpEl.value = v;
-        });
-      }
-
-      document.getElementById("cm-cancel-btn").addEventListener("click", () => renderCheckout(null));
-      document.getElementById("cm-pay-btn").addEventListener("click", async () => {
-        const payBtn = document.getElementById("cm-pay-btn");
-
-        const useNewCard = !defaultCard || (document.getElementById("cm-use-new")?.checked);
-        let cardName, cardNum, cardExp;
-
-        if (useNewCard) {
-          cardName = (document.getElementById("cm-card-name")?.value || "").trim();
-          cardNum  = (document.getElementById("cm-card-number")?.value || "").replace(/\s+/g, "");
-          cardExp  = (document.getElementById("cm-card-exp")?.value || "").trim();
-          const cardCvc = (document.getElementById("cm-card-cvc")?.value || "").trim();
-          if (!cardName || cardNum.length < 12 || !/^(0[1-9]|1[0-2])\/\d{2}$/.test(cardExp) || !/^\d{3,4}$/.test(cardCvc)) {
-            showToast("Enter valid payment details.", "error");
-            return;
-          }
-        } else {
-          cardNum  = defaultCard.cardNumber;
-          cardName = defaultCard.cardHolder;
-          cardExp  = defaultCard.expiry;
-        }
-
-        if (payBtn.disabled) return;
-        payBtn.disabled = true;
-        payBtn.textContent = "Processing…";
-
-        try {
-          // Save card if requested
-          if (useNewCard && document.getElementById("cm-save-card")?.checked) {
-            const newId = await savePaymentCard(clientId, {
-              cardHolder: cardName, cardNumber: cardNum, last4: cardNum.slice(-4),
-              expiry: cardExp, isDefault: savedCards.length === 0
-            });
-            if (savedCards.length === 0) await setDefaultCard(clientId, newId);
-          }
-
-          const allMemberships = await getAllMemberships();
-          const currentlyActive = allMemberships.filter(m => m.clientId === clientId && (m.status || "active") === "active" && (!m.expiresAt || m.expiresAt >= Date.now()));
-          for (const m of currentlyActive) {
-            await updateMembership(m.id, { status: "cancelled", cancelledAt: Date.now(), cancelReason: "Replaced by new purchase" });
-          }
-
-          const startedAt = Date.now();
-          const expiresAt = startedAt + (Number(plan.durationDays) || 30) * oneDay;
-          const membershipId = await createMembership({
-            clientId,
-            planId: plan.id,
-            type: plan.name,
-            status: "active",
-            startedAt,
-            durationDays: Number(plan.durationDays) || 30,
-            expiresAt,
-            price: Number(plan.price) || 0,
-            paymentMethod: "card"
-          });
-
-          await createMembershipPayment({
-            clientId,
-            membershipId,
-            planId: plan.id,
-            planName: plan.name,
-            membershipType: plan.name,
-            amount: Number(plan.price) || 0,
-            method: "card",
-            status: "paid",
-            maskedCard: `**** **** **** ${cardNum.slice(-4)}`
-          });
-
-          await recordTransaction({
-            type: "membership",
-            amount: Number(plan.price) || 0,
-            description: `${plan.name} membership purchase`,
-            category: "membership"
-          });
-
-          showToast("Membership activated successfully!", "success");
-          _loadClientMembershipPanel(clientId);
-        } catch (e) {
-          showToast(e.message, "error");
-          const pb = document.getElementById("cm-pay-btn");
-          if (pb) { pb.disabled = false; pb.textContent = "Pay & Activate"; }
-        }
-      });
-    }
+    // ── Plans grid ────────────────────────────────────────────────────────────
+    const plansGrid   = el("cm-plans-grid");
+    const checkoutDiv = el("cm-checkout-area");
+    const searchInp   = el("cm-search");
 
     function renderPlans() {
-      const q = (searchInp.value || "").trim().toLowerCase();
+      const q = String(searchInp?.value || "").trim().toLowerCase();
       const filtered = plans.filter(p => {
-        const hay = [p.name, p.description, (p.features || []).join(" "), `${p.durationDays || 30}`].join(" ").toLowerCase();
+        const hay = [p.name, p.description, ...(p.features || [])].join(" ").toLowerCase();
         return !q || hay.includes(q);
       });
+      if (!filtered.length) { plansGrid.innerHTML = "<p style='opacity:0.65'>No plans found.</p>"; return; }
 
-      if (!filtered.length) {
-        plansGrid.innerHTML = "<p style='opacity:0.65'>No plans match your search.</p>";
-        renderCheckout(null);
-        return;
-      }
+      plansGrid.innerHTML = filtered.map(p => {
+        const pr         = tierRank(p.name);
+        const isCurrent  = !!(activeMem && pr === activeRank);
+        const isUpgrade  = !!(activeMem && pr > activeRank);
+        const isDowngr   = !!(activeMem && pr < activeRank);
+        const upgradeAmt = isUpgrade ? Math.max(0, (Number(p.price) || 0) - activePlanPrice) : 0;
 
-      plansGrid.innerHTML = filtered.map(p => `
-        <div class="card" style="cursor:default">
-          <h3 style="margin-bottom:6px">${p.name}</h3>
-          <p style="opacity:0.72;margin-bottom:8px">${p.description || "Membership plan"}</p>
-          <p style="margin-bottom:8px"><strong>${toMoney(p.price)}</strong> · ${p.durationDays || 30} days</p>
-          <div style="opacity:0.75;font-size:0.86rem;margin-bottom:10px">${(p.features || []).slice(0, 3).join(" • ")}</div>
-          <button class="cm-buy-btn" data-plan="${p.id}" style="padding:8px 16px;border:none;border-radius:8px;background:linear-gradient(90deg,#0887e2,#006af5);color:#fff;cursor:pointer;font-weight:700">Choose Plan</button>
-        </div>
-      `).join("");
+        let badge = "";
+        let btnTxt = activeMem ? "Choose Plan" : "Subscribe";
+        let btnOff = false;
+        let btnCss = "background:linear-gradient(90deg,#0887e2,#006af5);cursor:pointer";
 
-      plansGrid.querySelectorAll(".cm-buy-btn").forEach(btn => {
+        if (isCurrent) {
+          badge  = `<div style="font-size:0.78rem;color:#e96d25;margin-bottom:8px;font-weight:600">✓ Your current plan</div>`;
+          btnTxt = "Current Plan"; btnOff = true;
+          btnCss = "background:rgba(255,255,255,0.1);cursor:not-allowed;opacity:0.55";
+        } else if (isUpgrade) {
+          badge  = `<div style="font-size:0.78rem;color:#00c853;margin-bottom:8px;font-weight:600">⬆ Upgrade — pay only ${money(upgradeAmt)} extra</div>`;
+          btnTxt = "Upgrade Plan";
+          btnCss = "background:linear-gradient(90deg,#00c853,#009944);cursor:pointer";
+        } else if (isDowngr) {
+          badge  = `<div style="font-size:0.78rem;color:#ff5577;margin-bottom:8px">⬇ Not available — downgrade blocked while higher tier is active.</div>`;
+          btnTxt = "Not Available"; btnOff = true;
+          btnCss = "background:rgba(255,255,255,0.08);cursor:not-allowed;opacity:0.4";
+        }
+
+        return `
+          <div class="card" style="cursor:default">
+            <h3 style="margin-bottom:4px">${p.name}</h3>
+            <p style="opacity:0.7;font-size:0.86rem;margin-bottom:8px">${p.description || ""}</p>
+            <p style="margin-bottom:8px"><strong>${money(p.price)}</strong> · ${p.durationDays || 30} days</p>
+            ${badge}
+            <div style="opacity:0.7;font-size:0.82rem;margin-bottom:10px">${(p.features || []).slice(0, 3).join(" • ")}</div>
+            <button class="cm-pick-btn" data-pid="${p.id}" ${btnOff ? "disabled" : ""}
+              style="padding:8px 16px;border:none;border-radius:8px;color:#fff;font-weight:700;${btnCss}">
+              ${btnTxt}
+            </button>
+          </div>`;
+      }).join("");
+
+      plansGrid.querySelectorAll(".cm-pick-btn:not([disabled])").forEach(btn => {
         btn.addEventListener("click", () => {
-          const plan = plans.find(p => p.id === btn.dataset.plan);
-          if (!plan) { showToast("Plan not found. Please refresh.", "error"); return; }
+          const plan = plans.find(p => p.id === btn.dataset.pid);
+          if (!plan) { showToast("Plan not found. Refresh the page.", "error"); return; }
           renderCheckout(plan);
         });
       });
     }
 
-    searchInp.addEventListener("input", renderPlans);
+    // ── Checkout ──────────────────────────────────────────────────────────────
+    async function renderCheckout(plan) {
+      if (!plan) { checkoutDiv.innerHTML = ""; return; }
+
+      const selPrice   = Number(plan.price) || 0;
+      const isUpgr     = !!(activeMem && tierRank(plan.name) > activeRank);
+      const chargeAmt  = isUpgr ? Math.max(0, selPrice - activePlanPrice) : selPrice;
+
+      checkoutDiv.innerHTML = `<div style="text-align:center;padding:14px;opacity:0.5">Loading…</div>`;
+      let savedCards = [];
+      try { savedCards = await getPaymentCards(clientId); } catch (_) {}
+      const defCard = savedCards.find(c => c.isDefault) || savedCards[0] || null;
+      const iStyle = `padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:inherit;font-family:inherit;width:100%;box-sizing:border-box`;
+
+      checkoutDiv.innerHTML = `
+        <div class="card" style="cursor:default">
+          <h3 style="margin-bottom:8px">${isUpgr ? "Upgrade to" : "Subscribe to"} ${plan.name}</h3>
+          <p style="opacity:0.72;margin-bottom:6px">Plan price: <strong>${money(selPrice)}</strong> · ${plan.durationDays || 30} days</p>
+          ${isUpgr
+            ? `<p style="margin-bottom:12px">Charge now: <strong style="color:#00c853;font-size:1.1rem">${money(chargeAmt)}</strong>
+                <span style="opacity:0.6;font-size:0.85rem"> (${money(selPrice)} − ${money(activePlanPrice)} already paid)</span></p>`
+            : `<p style="margin-bottom:12px">Amount due: <strong style="color:#00c853;font-size:1.1rem">${money(chargeAmt)}</strong></p>`}
+
+          ${defCard ? `
+            <div style="margin-bottom:12px;padding:10px 14px;border-radius:8px;background:rgba(8,165,226,0.08);border:1px solid rgba(8,165,226,0.3)">
+              <div style="font-size:0.82rem;opacity:0.65">Using saved card</div>
+              <strong>${defCard.cardHolder} — •••• ${defCard.last4} (${defCard.expiry})</strong>
+              <div style="margin-top:6px"><label style="font-size:0.8rem;cursor:pointer"><input type="checkbox" id="cm-use-new"> Use a different card</label></div>
+            </div>` : ""}
+
+          <div id="cm-new-card-fields" style="${defCard ? "display:none" : ""}">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+              <input id="cm-cname" type="text" placeholder="Cardholder Name" style="${iStyle}">
+              <input id="cm-cnum"  type="text" placeholder="Card Number" maxlength="19" style="${iStyle}">
+              <input id="cm-cexp"  type="text" placeholder="MM/YY" maxlength="5" style="${iStyle}">
+              <input id="cm-ccvc"  type="password" placeholder="CVC" maxlength="4" style="${iStyle}">
+            </div>
+            <label style="font-size:0.82rem;cursor:pointer;display:flex;align-items:center;gap:6px;margin-bottom:10px">
+              <input type="checkbox" id="cm-save-card"> Save card for future payments
+            </label>
+          </div>
+
+          <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap">
+            <button id="cm-pay-btn" style="padding:10px 24px;border:none;border-radius:8px;background:linear-gradient(90deg,#00c853,#009944);color:#fff;cursor:pointer;font-weight:700;font-size:1rem">
+              ${isUpgr ? `Pay ${money(chargeAmt)} &amp; Upgrade` : `Pay ${money(chargeAmt)} &amp; Activate`}
+            </button>
+            <button id="cm-co-cancel" style="padding:10px 20px;border:1px solid rgba(255,255,255,0.2);border-radius:8px;background:transparent;color:inherit;cursor:pointer">
+              Cancel
+            </button>
+          </div>
+        </div>`;
+
+      if (defCard) {
+        el("cm-use-new").addEventListener("change", e => {
+          el("cm-new-card-fields").style.display = e.target.checked ? "block" : "none";
+        });
+      }
+      const cnumEl = el("cm-cnum");
+      if (cnumEl) cnumEl.addEventListener("input", () => {
+        let v = cnumEl.value.replace(/\D/g, "").slice(0, 16);
+        cnumEl.value = v.replace(/(.{4})/g, "$1 ").trim();
+      });
+      const cexpEl = el("cm-cexp");
+      if (cexpEl) cexpEl.addEventListener("input", () => {
+        let v = cexpEl.value.replace(/\D/g, "").slice(0, 4);
+        if (v.length >= 3) v = v.slice(0, 2) + "/" + v.slice(2);
+        cexpEl.value = v;
+      });
+
+      el("cm-co-cancel").addEventListener("click", () => renderCheckout(null));
+
+      el("cm-pay-btn").addEventListener("click", async () => {
+        const payBtn = el("cm-pay-btn");
+        const useNew = chargeAmt > 0 && (!defCard || el("cm-use-new")?.checked);
+        let cardName, cardNum, cardExp;
+
+        if (chargeAmt > 0 && useNew) {
+          cardName = (el("cm-cname")?.value || "").trim();
+          cardNum  = (el("cm-cnum")?.value  || "").replace(/\s+/g, "");
+          cardExp  = (el("cm-cexp")?.value  || "").trim();
+          const cvc = (el("cm-ccvc")?.value || "").trim();
+          if (!cardName || cardNum.length < 12 || !/^(0[1-9]|1[0-2])\/\d{2}$/.test(cardExp) || !/^\d{3,4}$/.test(cvc)) {
+            showToast("Please enter valid card details.", "error"); return;
+          }
+        } else if (chargeAmt > 0 && defCard) {
+          cardName = defCard.cardHolder;
+          cardNum  = defCard.cardNumber || String(defCard.last4 || "0000").padStart(16, "0");
+          cardExp  = defCard.expiry;
+        } else {
+          cardNum = "0000000000000000";
+        }
+
+        if (payBtn.disabled) return;
+        payBtn.disabled = true; payBtn.textContent = "Processing…";
+
+        try {
+          if (chargeAmt > 0 && useNew && el("cm-save-card")?.checked) {
+            const nid = await savePaymentCard(clientId, {
+              cardHolder: cardName, cardNumber: cardNum, last4: cardNum.slice(-4),
+              expiry: cardExp, isDefault: savedCards.length === 0
+            });
+            if (savedCards.length === 0) await setDefaultCard(clientId, nid);
+          }
+
+          // Re-fetch FRESH state right before committing to DB.
+          // Plain full-fetch to avoid requiring .indexOn Firebase rules.
+          const freshAll = (await getAllMemberships()).filter(m => m.clientId === clientId);
+
+          const freshActive = freshAll
+            .filter(m => { const s = String(m.status || "active").toLowerCase(); return s === "active" && (!m.expiresAt || m.expiresAt >= Date.now()); })
+            .sort((a, b) => {
+              const rd = tierRank(b.type) - tierRank(a.type);
+              return rd !== 0 ? rd : ((b.upgradedAt || b.startedAt || 0) - (a.upgradedAt || a.startedAt || 0));
+            });
+          const freshBest      = freshActive[0] || null;
+          const freshBestRank  = tierRank(freshBest?.type);
+          const planRankVal    = tierRank(plan.name);
+
+          if (freshBest && planRankVal < freshBestRank) {
+            throw new Error(`Cannot downgrade from ${freshBest.type} to ${plan.name}. Cancel your current plan first.`);
+          }
+
+          const isUpgradeCommit = !!(freshBest && planRankVal > freshBestRank);
+          const freshBestPlan   = freshBest
+            ? (plans.find(p2 => p2.id === freshBest.planId) ||
+               plans.find(p2 => String(p2.name || "").toLowerCase() === String(freshBest.type || "").toLowerCase()) ||
+               { price: freshBest.price })
+            : null;
+          const currentPrice  = Number(freshBestPlan?.price) || 0;
+          const chargeCommit  = isUpgradeCommit ? Math.max(0, selPrice - currentPrice) : selPrice;
+
+          // Cancel ALL non-cancelled memberships (clean slate regardless of status)
+          for (const m of freshAll) {
+            const s = String(m.status || "").toLowerCase();
+            if (s === "cancelled" || s === "canceled") continue;
+            await updateMembership(m.id, {
+              status: "cancelled", cancelledAt: Date.now(),
+              cancelReason: isUpgradeCommit ? `Upgraded to ${plan.name}` : "Replaced by new purchase"
+            });
+          }
+
+          // Create brand-new active membership record
+          const startedAt = Date.now();
+          const expiresAt = startedAt + (Number(plan.durationDays) || 30) * ONE_DAY;
+          const newMemId  = await createMembership({
+            clientId, planId: plan.id, type: plan.name, status: "active",
+            startedAt, durationDays: Number(plan.durationDays) || 30, expiresAt,
+            price: selPrice, paymentMethod: chargeCommit > 0 ? "card" : "adjustment",
+            ...(isUpgradeCommit ? { upgradedAt: Date.now(), upgradeFromType: freshBest?.type || "", upgradeFromPrice: currentPrice } : {})
+          });
+
+          // Record payment
+          await createMembershipPayment({
+            clientId, membershipId: newMemId, planId: plan.id,
+            planName: plan.name, membershipType: plan.name,
+            amount: chargeCommit, method: chargeCommit > 0 ? "card" : "adjustment", status: "paid",
+            maskedCard: chargeCommit > 0 ? `**** **** **** ${cardNum.slice(-4)}` : "",
+            planPrice: selPrice, previousPlanPrice: currentPrice,
+            paymentReason: isUpgradeCommit ? "upgrade_difference" : "new_membership"
+          });
+
+          await recordTransaction({
+            type: "membership", amount: chargeCommit,
+            description: isUpgradeCommit ? `Upgrade to ${plan.name}` : `${plan.name} membership`,
+            category: "membership"
+          });
+
+          showToast(
+            isUpgradeCommit
+              ? `Upgraded to ${plan.name}! Charged ${money(chargeCommit)}.`
+              : `${plan.name} membership activated! Charged ${money(chargeCommit)}.`,
+            "success"
+          );
+          _loadClientMembershipPanel(clientId);
+        } catch (err) {
+          showToast(err.message, "error");
+          payBtn.disabled = false;
+          payBtn.textContent = isUpgr ? `Pay ${money(chargeAmt)} & Upgrade` : `Pay ${money(chargeAmt)} & Activate`;
+        }
+      });
+    }
+
+    if (searchInp) searchInp.addEventListener("input", renderPlans);
     renderPlans();
-    renderPayments();
   } catch (e) {
-    panel.innerHTML = `<h2 style='color:#0887e2'>Membership Hub</h2><p style='color:#ff0033'>${e.message}</p>`;
+    panel.innerHTML = `<h2 style='color:#0887e2'>Membership Hub</h2><p style='color:#ff0033'>Error: ${e.message}</p>`;
   }
 }
 
@@ -3209,6 +3553,29 @@ async function _syncPendingStoreActions(uid) {
       sessionStorage.removeItem("xgym_pending_memberships");
       const memberships = JSON.parse(msRaw);
       for (const m of memberships) {
+        const plans = await getMembershipPlans().catch(() => []);
+        const activeMembership = await getMembership(uid).catch(() => null);
+
+        function syncPlanRank(plan) {
+          if (!plan) return 0;
+          const nm = String(plan.name || plan.type || "").toLowerCase();
+          if (nm.includes("starter")) return 1;
+          if (nm.includes("core")) return 2;
+          if (nm.includes("elite")) return 3;
+          return Number(plan.price) || 0;
+        }
+
+        const nextPlan = plans.find(p => p.id === m.planId) || { name: m.name, price: m.price };
+        const activePlan = activeMembership
+          ? (plans.find(p => p.id === activeMembership.planId)
+              || plans.find(p => String(p.name || "").toLowerCase() === String(activeMembership.type || "").toLowerCase())
+              || { name: activeMembership.type, price: activeMembership.price })
+          : null;
+
+        if (activeMembership && syncPlanRank(nextPlan) < syncPlanRank(activePlan)) {
+          continue;
+        }
+
         // Cancel any currently active membership
         const allM = await getAllMemberships().catch(() => []);
         const active = allM.filter(x => x.clientId === uid && (x.status || "active") === "active" && (!x.expiresAt || x.expiresAt >= Date.now()));
@@ -3245,18 +3612,26 @@ async function _syncPendingStoreActions(uid) {
     }
   } catch (e) { /* ignore */ }
 
-  // ── 3. Persist store orders into sessionStorage order history ─
+  // ── 3. Persist store orders into Firebase store_purchases ────
   try {
     const ordersRaw = sessionStorage.getItem("xgym_pending_orders");
     if (ordersRaw) {
+      sessionStorage.removeItem("xgym_pending_orders");
       const orders = JSON.parse(ordersRaw);
       for (const o of orders) {
+        if (o.status !== "paid") continue;
+        // Write to store_purchases so the dashboard cart panel shows it
+        await createStorePurchase(uid, {
+          total: Number(o.amount) || 0,
+          method: o.method || "card",
+          summary: o.items || "",
+          items: Array.isArray(o.itemsData) ? o.itemsData : []
+        });
         await recordTransaction({
           type: "store_purchase", amount: Number(o.amount) || 0,
-          description: "Store purchase: " + o.items, category: "store"
+          description: "Store purchase: " + (o.items || ""), category: "store"
         });
       }
-      sessionStorage.removeItem("xgym_pending_orders");
     }
   } catch (e) { /* ignore */ }
 }
@@ -3275,6 +3650,7 @@ async function _loadCartPanel(uid) {
   async function render() {
     const cart = getCart();
     const total = cart.reduce((s, i) => s + i.price * i.qty, 0);
+    const purchases = uid ? await getClientStorePurchases(uid).catch(() => []) : [];
 
     panel.innerHTML = `
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:20px">
@@ -3288,7 +3664,14 @@ async function _loadCartPanel(uid) {
           ? `<p style="opacity:0.55">Your cart is empty. Browse the store below to add items.</p>`
           : cart.map(item => `
             <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.07)">
-              <div style="flex:1"><strong>${item.name}</strong><span style="opacity:0.6;font-size:0.82rem;margin-left:8px">× ${item.qty}</span></div>
+              <div style="flex:1">
+                <strong>${item.name}</strong>
+                <div style="display:flex;align-items:center;gap:6px;margin-top:6px">
+                  <button class="cart-dec-btn" data-id="${item.id}" style="padding:2px 8px;border:1px solid rgba(255,255,255,0.2);border-radius:5px;background:transparent;color:inherit;cursor:pointer">−</button>
+                  <span style="min-width:22px;text-align:center;font-size:0.84rem">${item.qty}</span>
+                  <button class="cart-inc-btn" data-id="${item.id}" style="padding:2px 8px;border:1px solid rgba(255,255,255,0.2);border-radius:5px;background:transparent;color:inherit;cursor:pointer">+</button>
+                </div>
+              </div>
               <strong style="color:#e96d25">£${(item.price * item.qty).toFixed(2)}</strong>
               <button class="cart-remove-btn" data-id="${item.id}" style="padding:4px 10px;border:1px solid rgba(255,0,51,0.4);border-radius:6px;background:transparent;color:#ff5577;cursor:pointer;font-size:0.75rem">✕</button>
             </div>`).join("")
@@ -3312,15 +3695,85 @@ async function _loadCartPanel(uid) {
         <div id="cart-store-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px"></div>
       </div>
 
+      <div class="card" style="cursor:default;margin-bottom:20px">
+        <h3 style="margin:0 0 12px">Purchase History</h3>
+        <div id="cart-purchase-history">
+          ${!uid
+            ? `<p style="opacity:0.55">Sign in to view purchase history.</p>`
+            : purchases.length === 0
+              ? `<p style="opacity:0.55">No purchases yet.</p>`
+              : purchases.slice(0, 20).map(p => `
+                  <div style="padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.08)">
+                    <div style="display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap">
+                      <div>
+                        <strong style="font-size:0.88rem">${(p.items || []).map(i => `${i.name} × ${i.qty}`).join(', ') || p.summary || 'Purchase'}</strong>
+                        <div style="font-size:0.78rem;opacity:0.6;margin-top:3px">${formatDate(p.createdAt)} · ${p.method || 'card'}</div>
+                      </div>
+                      <div style="display:flex;align-items:center;gap:8px">
+                        <span style="color:#00c853;font-weight:700">£${(Number(p.total) || 0).toFixed(2)}</span>
+                        <button class="cart-rebuy-btn" data-id="${p.id}" style="padding:5px 10px;border:1px solid rgba(8,165,226,0.45);border-radius:6px;background:transparent;color:#0887e2;cursor:pointer;font-size:0.76rem">Rebuy</button>
+                      </div>
+                    </div>
+                  </div>
+                `).join('')
+          }
+        </div>
+      </div>
+
       <div id="cart-checkout-form"></div>
     `;
 
     // Cart actions
     panel.querySelectorAll(".cart-remove-btn").forEach(btn => {
-      btn.addEventListener("click", () => { removeFromCart(btn.dataset.id); render(); });
+      btn.addEventListener("click", async () => { removeFromCart(btn.dataset.id); await render(); });
     });
+    panel.querySelectorAll(".cart-inc-btn").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const item = cart.find(c => c.id === btn.dataset.id);
+        const stockItem = storeItems.find(s => s.id === btn.dataset.id);
+        const stock = stockItem && stockItem.stock != null ? Number(stockItem.stock) : null;
+        if (stock != null && (item?.qty || 0) >= stock) {
+          showToast("No more stock available for this item.", "error");
+          return;
+        }
+        incrementCartItem(btn.dataset.id);
+        await render();
+      });
+    });
+    panel.querySelectorAll(".cart-dec-btn").forEach(btn => {
+      btn.addEventListener("click", async () => { decrementCartItem(btn.dataset.id); await render(); });
+    });
+
+    panel.querySelectorAll(".cart-rebuy-btn").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const purchase = purchases.find(p => p.id === btn.dataset.id);
+        if (!purchase || !Array.isArray(purchase.items) || !purchase.items.length) {
+          showToast("Nothing to rebuy from this order.", "error");
+          return;
+        }
+
+        let addedAny = false;
+        purchase.items.forEach(pi => {
+          const match = storeItems.find(s => s.id === pi.id);
+          if (!match) return;
+          const stock = match.stock != null ? Number(match.stock) : null;
+          const inCart = getCart().find(c => c.id === match.id);
+          const already = inCart ? (inCart.qty || 0) : 0;
+          const targetQty = Number(pi.qty) || 1;
+          const allowed = stock == null ? targetQty : Math.max(0, Math.min(targetQty, stock - already));
+          for (let i = 0; i < allowed; i++) {
+            addToCart({ id: match.id, name: match.name, price: Number(match.price) || 0 });
+            addedAny = true;
+          }
+        });
+
+        showToast(addedAny ? "Items added to cart from purchase history." : "No stock available to rebuy these items.", addedAny ? "success" : "error");
+        await render();
+      });
+    });
+
     const clearBtn = document.getElementById("cart-clear-btn");
-    if (clearBtn) clearBtn.addEventListener("click", () => { clearCart(); render(); });
+    if (clearBtn) clearBtn.addEventListener("click", async () => { clearCart(); await render(); });
 
     const gotoStoreBtn = document.getElementById("cart-goto-store-btn");
     if (gotoStoreBtn) gotoStoreBtn.addEventListener("click", () => _openStore(uid));
@@ -3395,19 +3848,52 @@ async function _loadCartPanel(uid) {
           payBtn.disabled = true; payBtn.textContent = "Processing…";
 
           try {
+            const latestCart = getCart();
+            const totalNow = latestCart.reduce((sum, i) => sum + (Number(i.price) || 0) * (Number(i.qty) || 0), 0);
+            const stockErrors = [];
+            latestCart.forEach(ci => {
+              const si = storeItems.find(s => s.id === ci.id);
+              if (si && si.stock != null && (ci.qty || 0) > Number(si.stock)) {
+                stockErrors.push(`${ci.name} (requested ${ci.qty}, stock ${si.stock})`);
+              }
+            });
+            if (stockErrors.length) {
+              throw new Error("Not enough stock: " + stockErrors.join(", "));
+            }
+
             if (useNewCard && uid && document.getElementById("cart-save-card")?.checked) {
               const newId = await savePaymentCard(uid, { cardHolder, cardNumber: cardNum, last4: cardNum.slice(-4), expiry: cardExp, isDefault: savedCards.length === 0 });
               if (savedCards.length === 0) await setDefaultCard(uid, newId);
             }
-            await recordTransaction({ type: "store_purchase", amount: total, description: "Cart purchase: " + cart.map(i => i.name).join(", "), category: "store" });
+
+            for (const ci of latestCart) {
+              const si = storeItems.find(s => s.id === ci.id);
+              if (si && si.stock != null) {
+                const newStock = Math.max(0, Number(si.stock) - (ci.qty || 0));
+                await updateStoreItem(si.id, { stock: newStock });
+                si.stock = newStock;
+              }
+            }
+
+            await recordTransaction({
+              type: "store_purchase",
+              amount: totalNow,
+              description: "Cart purchase: " + latestCart.map(i => `${i.name} x${i.qty}`).join(", "),
+              category: "store"
+            });
+
+            if (uid) {
+              await createStorePurchase(uid, {
+                total: totalNow,
+                method: useNewCard ? "card" : (defaultCard ? "saved_card" : "card"),
+                items: latestCart.map(i => ({ id: i.id, name: i.name, qty: i.qty, price: Number(i.price) || 0 })),
+                summary: latestCart.map(i => `${i.name} × ${i.qty}`).join(", ")
+              });
+            }
+
             clearCart();
-            cf.innerHTML = `
-              <div class="card" style="cursor:default;text-align:center;padding:24px">
-                <div style="font-size:2.2rem;margin-bottom:8px">&#10003;</div>
-                <h3>Payment Successful!</h3>
-                <p style="opacity:0.7">Your order has been placed. Total: <strong>£${total.toFixed(2)}</strong></p>
-              </div>`;
-            render();
+            showToast(`Payment successful! Total: £${totalNow.toFixed(2)}`, "success");
+            await render();
           } catch (e) {
             showToast(e.message, "error");
             const pb = document.getElementById("cart-pay-btn");
@@ -3438,18 +3924,61 @@ async function _loadCartPanel(uid) {
             <span style="font-weight:700;color:#00c853;font-size:1.05rem">£${(item.price || 0).toFixed(2)}</span>
             <span style="font-size:0.78rem;opacity:0.55">${item.stock != null ? "Stock: " + item.stock : ""}</span>
           </div>
-          <button class="cart-add-item-btn" data-id="${item.id}" data-name="${item.name}" data-price="${item.price || 0}"
+          <div style="display:flex;align-items:center;gap:6px">
+            <button class="cart-qty-dec" data-id="${item.id}" style="padding:3px 8px;border:1px solid rgba(255,255,255,0.2);border-radius:6px;background:transparent;color:inherit;cursor:pointer">−</button>
+            <span id="cart-qty-${item.id}" style="min-width:22px;text-align:center;font-size:0.84rem">1</span>
+            <button class="cart-qty-inc" data-id="${item.id}" style="padding:3px 8px;border:1px solid rgba(255,255,255,0.2);border-radius:6px;background:transparent;color:inherit;cursor:pointer">+</button>
+          </div>
+          <button class="cart-add-item-btn" data-id="${item.id}" data-name="${item.name}" data-price="${item.price || 0}" ${item.stock != null && Number(item.stock) <= 0 ? "disabled" : ""}
             style="padding:7px;border:none;border-radius:8px;background:linear-gradient(90deg,#0887e2,#006af5);color:#fff;cursor:pointer;font-size:0.83rem;font-weight:600">
-            Add to Cart
+            ${item.stock != null && Number(item.stock) <= 0 ? "Out of Stock" : "Add to Cart"}
           </button>
         </div>
       `).join("");
 
-      grid.querySelectorAll(".cart-add-item-btn").forEach(btn => {
+      const qtyMap = {};
+      filtered.forEach(i => { qtyMap[i.id] = 1; });
+
+      grid.querySelectorAll(".cart-qty-inc").forEach(btn => {
         btn.addEventListener("click", () => {
-          addToCart({ id: btn.dataset.id, name: btn.dataset.name, price: parseFloat(btn.dataset.price) || 0 });
+          const item = filtered.find(i => i.id === btn.dataset.id);
+          if (!item) return;
+          const current = qtyMap[item.id] || 1;
+          const stock = item.stock != null ? Number(item.stock) : null;
+          const maxAllowed = stock == null ? current + 1 : Math.max(1, stock);
+          qtyMap[item.id] = Math.min(current + 1, maxAllowed);
+          const qtyEl = document.getElementById("cart-qty-" + item.id);
+          if (qtyEl) qtyEl.textContent = String(qtyMap[item.id]);
+        });
+      });
+      grid.querySelectorAll(".cart-qty-dec").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const item = filtered.find(i => i.id === btn.dataset.id);
+          if (!item) return;
+          const current = qtyMap[item.id] || 1;
+          qtyMap[item.id] = Math.max(1, current - 1);
+          const qtyEl = document.getElementById("cart-qty-" + item.id);
+          if (qtyEl) qtyEl.textContent = String(qtyMap[item.id]);
+        });
+      });
+
+      grid.querySelectorAll(".cart-add-item-btn").forEach(btn => {
+        btn.addEventListener("click", async () => {
+          const stockItem = filtered.find(i => i.id === btn.dataset.id);
+          const stock = stockItem && stockItem.stock != null ? Number(stockItem.stock) : null;
+          const desired = qtyMap[btn.dataset.id] || 1;
+          const inCart = getCart().find(c => c.id === btn.dataset.id);
+          const already = inCart ? (inCart.qty || 0) : 0;
+          const allowed = stock == null ? desired : Math.max(0, Math.min(desired, stock - already));
+          if (allowed <= 0) {
+            showToast("No stock left for this item.", "error");
+            return;
+          }
+          for (let i = 0; i < allowed; i++) {
+            addToCart({ id: btn.dataset.id, name: btn.dataset.name, price: parseFloat(btn.dataset.price) || 0 });
+          }
           showToast(btn.dataset.name + " added to cart!", "success");
-          render();
+          await render();
         });
       });
     }
@@ -3597,8 +4126,121 @@ function _loadSettingsPanel(uid) {
     <h2 style="color:#0887e2">Settings</h2>
     <p style="opacity:0.65;margin-bottom:20px">Manage your payment methods and account preferences.</p>
     <div id="settings-cards-container"></div>
+    <div id="settings-payment-history" style="margin-top:24px"></div>
   `;
   _loadCardWalletPanel(uid, document.getElementById("settings-cards-container"));
+  _loadClientPaymentHistoryPanel(uid, document.getElementById("settings-payment-history"));
+}
+
+async function _loadClientPaymentHistoryPanel(uid, container) {
+  if (!container) return;
+  container.innerHTML = `
+    <div class="card" style="cursor:default">
+      <h3 style="margin-bottom:4px">&#128196; Payment History</h3>
+      <p style="opacity:0.55;font-size:0.84rem;margin-bottom:16px">All membership and store purchases.</p>
+      <div style="text-align:center;padding:20px;opacity:0.45">Loading…</div>
+    </div>`;
+
+  const money = n => `£${(Number(n) || 0).toFixed(2)}`;
+
+  try {
+    const [membershipPaymentsRaw, storePurchases] = await Promise.all([
+      getClientMembershipPayments(uid).catch(() => []),
+      getClientStorePurchases(uid).catch(() => [])
+    ]);
+
+    // Already scoped to this client by getClientMembershipPayments
+    const membershipPayments = membershipPaymentsRaw
+      .map(p => ({
+        _source:  "membership",
+        _date:    p.createdAt || 0,
+        amount:   Number(p.amount) || 0,
+        label:    p.planName || p.membershipType || "Membership",
+        sublabel: p.paymentReason === "upgrade_difference" ? "Upgrade"
+                : p.paymentReason === "cancel_refund"      ? "Refund"
+                : "New membership",
+        method:   p.method || "card",
+        maskedCard: p.maskedCard || "",
+        raw: p
+      }));
+
+    // Normalise store purchases
+    const storeEntries = storePurchases.map(p => ({
+      _source:  "store",
+      _date:    p.createdAt || 0,
+      amount:   Number(p.total) || 0,
+      label:    p.summary || (p.items || []).map(i => `${i.name} ×${i.qty}`).join(", ") || "Store purchase",
+      sublabel: "Cart purchase",
+      method:   p.method || "card",
+      maskedCard: "",
+      raw: p
+    }));
+
+    const all = [...membershipPayments, ...storeEntries]
+      .sort((a, b) => b._date - a._date);
+
+    const SOURCE_ICON  = { membership: "🏋️", store: "🛒" };
+    const SOURCE_COLOR = { membership: "#0887e2", store: "#e96d25" };
+
+    container.innerHTML = `
+      <div class="card" style="cursor:default">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:16px">
+          <div>
+            <h3 style="margin:0">&#128196; Payment History</h3>
+            <p style="opacity:0.55;font-size:0.82rem;margin:4px 0 0">All membership and store purchases — ${all.length} record${all.length !== 1 ? "s" : ""}</p>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap" id="sph-filter-btns">
+            <button class="sph-filter" data-filter="all"        style="padding:5px 14px;border-radius:20px;border:1px solid rgba(255,255,255,0.2);background:rgba(8,165,226,0.2);color:inherit;cursor:pointer;font-size:0.8rem">All</button>
+            <button class="sph-filter" data-filter="membership" style="padding:5px 14px;border-radius:20px;border:1px solid rgba(255,255,255,0.2);background:transparent;color:inherit;cursor:pointer;font-size:0.8rem">🏋️ Membership</button>
+            <button class="sph-filter" data-filter="store"      style="padding:5px 14px;border-radius:20px;border:1px solid rgba(255,255,255,0.2);background:transparent;color:inherit;cursor:pointer;font-size:0.8rem">🛒 Store</button>
+          </div>
+        </div>
+        <div id="sph-list"></div>
+      </div>`;
+
+    function renderList(filter) {
+      const list = document.getElementById("sph-list");
+      if (!list) return;
+      const filtered = filter === "all" ? all : all.filter(e => e._source === filter);
+      if (!filtered.length) {
+        list.innerHTML = `<p style="opacity:0.55;font-size:0.9rem">No ${filter === "all" ? "" : filter + " "}payments found.</p>`;
+        return;
+      }
+      list.innerHTML = filtered.map(e => `
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;padding:11px 0;border-bottom:1px solid rgba(255,255,255,0.07)">
+          <div style="display:flex;gap:12px;align-items:flex-start;min-width:0">
+            <div style="font-size:1.3rem;line-height:1;margin-top:2px">${SOURCE_ICON[e._source]}</div>
+            <div style="min-width:0">
+              <div style="font-weight:600;font-size:0.9rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:320px">${e.label}</div>
+              <div style="font-size:0.78rem;opacity:0.6;margin-top:2px">
+                <span style="color:${SOURCE_COLOR[e._source]}">${e.sublabel}</span>
+                &nbsp;·&nbsp;${e.method}${e.maskedCard ? " · " + e.maskedCard : ""}
+              </div>
+            </div>
+          </div>
+          <div style="text-align:right;flex-shrink:0">
+            <div style="font-weight:700;font-size:1rem;color:${e._source === "membership" && e.raw.paymentReason === "cancel_refund" ? "#00c853" : "#e96d25"}">${money(e.amount)}</div>
+            <div style="font-size:0.76rem;opacity:0.5;margin-top:2px">${e._date ? formatDate(e._date) : "—"}</div>
+          </div>
+        </div>`).join("");
+    }
+
+    let activeFilter = "all";
+    renderList(activeFilter);
+
+    container.querySelectorAll(".sph-filter").forEach(btn => {
+      btn.addEventListener("click", () => {
+        activeFilter = btn.dataset.filter;
+        container.querySelectorAll(".sph-filter").forEach(b => {
+          b.style.background = b.dataset.filter === activeFilter ? "rgba(8,165,226,0.2)" : "transparent";
+        });
+        renderList(activeFilter);
+      });
+    });
+
+  } catch (err) {
+    container.innerHTML = `<div class="card" style="cursor:default"><h3>Payment History</h3><p style="color:#ff0033">${err.message}</p></div>`;
+  }
 }
 
 // --------------------------------------------------------
