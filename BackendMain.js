@@ -490,13 +490,13 @@ async function addTrainerReview(trainerId, clientId, clientName, rating, text) {
  * @param {string} trainerId
  */
 async function hireTrainer(clientId, trainerId) {
+  const ts = Date.now();
   const newRef = db.ref("client_trainer").push();
-  await newRef.set({
-    clientId: clientId,
-    trainerId: trainerId,
-    status: "active",
-    createdAt: Date.now()
-  });
+  await newRef.set({ clientId, trainerId, status: "active", createdAt: ts });
+  // Mirror into invite paths so both read paths stay consistent
+  await db.ref("client_invites/" + clientId + "/" + trainerId).set({ status: "accepted", createdAt: ts });
+  await db.ref("trainer_invites/" + trainerId + "/" + clientId).set({ status: "accepted", createdAt: ts });
+  await db.ref("trainer_clients").push().set({ trainerId, clientId, createdAt: ts });
 }
 
 /**
@@ -505,14 +505,35 @@ async function hireTrainer(clientId, trainerId) {
  * @returns {string[]}
  */
 async function _getHiredTrainerIds(clientId) {
-  const snap = await db.ref("client_trainer").orderByChild("clientId").equalTo(clientId).once("value");
-  if (!snap.exists()) return [];
-  const ids = [];
-  snap.forEach(child => {
-    const data = child.val();
-    if (data.status === "active") ids.push(data.trainerId);
-  });
-  return ids;
+  const [snap1, snap2, snap3] = await Promise.all([
+    db.ref("client_trainer").orderByChild("clientId").equalTo(clientId).once("value"),
+    db.ref("client_invites/" + clientId).once("value"),
+    db.ref("trainer_clients").orderByChild("clientId").equalTo(clientId).once("value")
+  ]);
+  const ids = new Set();
+  if (snap1.exists()) {
+    snap1.forEach(child => {
+      const data = child.val();
+      const status = String(data?.status || "").toLowerCase();
+      const isActiveLike = !status || status === "active" || status === "accepted";
+      if (data && data.trainerId && isActiveLike) ids.add(data.trainerId);
+    });
+  }
+  if (snap2.exists()) {
+    snap2.forEach(child => {
+      const data = child.val();
+      const status = String(data?.status || "").toLowerCase();
+      const trainerId = data?.trainerId || child.key;
+      if ((status === "accepted" || status === "active") && trainerId) ids.add(trainerId);
+    });
+  }
+  if (snap3.exists()) {
+    snap3.forEach(child => {
+      const data = child.val();
+      if (data && data.trainerId) ids.add(data.trainerId);
+    });
+  }
+  return [...ids];
 }
 
 /**
@@ -684,6 +705,34 @@ async function getClientBiography(clientId) {
 }
 
 // ============================================================
+// PAYMENT CARDS  (stored at paymentCards/{uid}/{pushKey})
+// ============================================================
+async function savePaymentCard(uid, cardData) {
+  const ref = db.ref("paymentCards/" + uid).push();
+  await ref.set({ ...cardData, addedAt: Date.now() });
+  return ref.key;
+}
+
+async function getPaymentCards(uid) {
+  const snap = await db.ref("paymentCards/" + uid).once("value");
+  if (!snap.exists()) return [];
+  const cards = [];
+  snap.forEach(c => cards.push({ id: c.key, ...c.val() }));
+  return cards;
+}
+
+async function removePaymentCard(uid, cardId) {
+  await db.ref("paymentCards/" + uid + "/" + cardId).remove();
+}
+
+async function setDefaultCard(uid, cardId) {
+  const snap = await db.ref("paymentCards/" + uid).once("value");
+  const updates = {};
+  snap.forEach(c => { updates[c.key + "/isDefault"] = (c.key === cardId); });
+  if (Object.keys(updates).length) await db.ref("paymentCards/" + uid).update(updates);
+}
+
+// ============================================================
 // TRAINER INVITES & HIRE FLOW
 // ============================================================
 async function sendTrainerInvite(clientId, trainerId) {
@@ -703,30 +752,77 @@ async function getTrainerInvites(trainerId) {
   const snap = await db.ref("trainer_invites/" + trainerId).once("value");
   if (!snap.exists()) return [];
   const invites = [];
-  snap.forEach(child => invites.push({ ...child.val(), clientKey: child.key }));
+  snap.forEach(child => {
+    const data = child.val() || {};
+    invites.push({
+      ...data,
+      clientKey: child.key,
+      clientId: data.clientId || child.key,
+      trainerId: data.trainerId || trainerId
+    });
+  });
   return invites;
 }
 
 async function acceptTrainerInvite(trainerId, clientId) {
+  const inviteSnap = await db.ref("trainer_invites/" + trainerId + "/" + clientId).once("value");
+  const inviteData = inviteSnap.exists() ? (inviteSnap.val() || {}) : null;
+  const resolvedClientId = (inviteData && inviteData.clientId) || clientId;
+  const resolvedTrainerId = (inviteData && inviteData.trainerId) || trainerId;
+  const ts = Date.now();
   await db.ref("trainer_invites/" + trainerId + "/" + clientId + "/status").set("accepted");
-  await db.ref("client_invites/" + clientId + "/" + trainerId + "/status").set("accepted");
-  // Add to trainer_clients list
-  await db.ref("trainer_clients").push().set({ trainerId, clientId, createdAt: Date.now() });
-  // Get trainer info for payment notification
-  const tSnap = await db.ref("users/" + trainerId).once("value");
+  await db.ref("trainer_invites/" + trainerId + "/" + clientId + "/clientId").set(resolvedClientId);
+  await db.ref("trainer_invites/" + trainerId + "/" + clientId + "/trainerId").set(resolvedTrainerId);
+  await db.ref("client_invites/" + resolvedClientId + "/" + resolvedTrainerId + "/status").set("accepted");
+  await db.ref("client_invites/" + resolvedClientId + "/" + resolvedTrainerId + "/clientId").set(resolvedClientId);
+  await db.ref("client_invites/" + resolvedClientId + "/" + resolvedTrainerId + "/trainerId").set(resolvedTrainerId);
+  // Mirror into client_trainer so _getHiredTrainerIds() also sees this link
+  const existing = await db.ref("client_trainer").orderByChild("clientId").equalTo(resolvedClientId).once("value");
+  let alreadyLinked = false;
+  if (existing.exists()) {
+    existing.forEach(child => {
+      if (child.val().trainerId === resolvedTrainerId) alreadyLinked = true;
+    });
+  }
+  if (!alreadyLinked) {
+    await db.ref("client_trainer").push().set({
+      clientId: resolvedClientId,
+      trainerId: resolvedTrainerId,
+      status: "active",
+      createdAt: ts
+    });
+  }
+  // Idempotency check: avoid duplicate trainer_clients rows
+  const tcSnap = await db.ref("trainer_clients").orderByChild("trainerId").equalTo(resolvedTrainerId).once("value");
+  let alreadyInTC = false;
+  if (tcSnap.exists()) {
+    tcSnap.forEach(child => { if (child.val().clientId === resolvedClientId) alreadyInTC = true; });
+  }
+  if (!alreadyInTC) {
+    await db.ref("trainer_clients").push().set({
+      trainerId: resolvedTrainerId,
+      clientId: resolvedClientId,
+      createdAt: ts
+    });
+  }
+  const tSnap = await db.ref("users/" + resolvedTrainerId).once("value");
   const trainer = tSnap.val() || {};
-  // Send payment notification to client
-  await db.ref("payment_notifications/" + clientId).push().set({
-    trainerId, trainerName: trainer.name || "Trainer",
+  await db.ref("payment_notifications/" + resolvedClientId).push().set({
+    trainerId: resolvedTrainerId,
+    trainerName: trainer.name || "Trainer",
     pricePerMonth: trainer.pricePerMonth || 150,
     pricePerSession: trainer.pricePerSession || 40,
-    status: "pending", createdAt: Date.now()
+    status: "pending", createdAt: ts
   });
 }
 
 async function dismissTrainerInvite(trainerId, clientId) {
+  const inviteSnap = await db.ref("trainer_invites/" + trainerId + "/" + clientId).once("value");
+  const inviteData = inviteSnap.exists() ? (inviteSnap.val() || {}) : null;
+  const resolvedClientId = (inviteData && inviteData.clientId) || clientId;
+  const resolvedTrainerId = (inviteData && inviteData.trainerId) || trainerId;
   await db.ref("trainer_invites/" + trainerId + "/" + clientId + "/status").set("dismissed");
-  await db.ref("client_invites/" + clientId + "/" + trainerId + "/status").set("dismissed");
+  await db.ref("client_invites/" + resolvedClientId + "/" + resolvedTrainerId + "/status").set("dismissed");
 }
 
 async function getPaymentNotifications(clientId) {
@@ -755,7 +851,8 @@ async function getTrainerHiredClients(trainerId) {
   if (!snap.exists()) return [];
   const ids = [];
   snap.forEach(child => {
-    if (child.val().status === "accepted") ids.push(child.key);
+    const data = child.val() || {};
+    if (data.status === "accepted") ids.push(data.clientId || child.key);
   });
   // Also check legacy trainer_clients
   const snap2 = await db.ref("trainer_clients").orderByChild("trainerId").equalTo(trainerId).once("value");
@@ -821,13 +918,22 @@ async function createMealPlan(trainerId, clientId, plan) {
  * Create a gym class.
  */
 async function createClass(trainerId, trainerName, data) {
+  // source: "admin" = global (all clients see it)
+  //         "trainer" = linked clients only (clients who hired this trainer)
+  const isPublic = data.isPublic !== false;
   await db.ref("classes").push().set({
     trainerId,
     trainerName,
     name: data.name,
     day: data.day,
     time: data.time,
+    duration: Number(data.duration) || 60,
     capacity: Number(data.capacity) || 20,
+    description: String(data.description || "").trim(),
+    type: data.type || "General",
+    location: String(data.location || "").trim(),
+    isPublic,
+    source: isPublic ? "admin" : "trainer",
     createdAt: Date.now()
   });
 }
@@ -883,7 +989,7 @@ async function deleteClass(classId) {
  * Count bookings for a class.
  */
 async function getClassBookingCount(classId) {
-  const snap = await db.ref("bookings").orderByChild("classId").equalTo(classId).once("value");
+  const snap = await db.ref("classes/" + classId + "/participants").once("value");
   if (!snap.exists()) return 0;
   let count = 0;
   snap.forEach(() => count++);
@@ -894,21 +1000,24 @@ async function getClassBookingCount(classId) {
  * Client books a class. Checks capacity and duplicates.
  */
 async function bookClass(classId, clientId, clientName) {
-  const classSnap = await db.ref("classes/" + classId).once("value");
+  const [classSnap, partSnap] = await Promise.all([
+    db.ref("classes/" + classId).once("value"),
+    db.ref("classes/" + classId + "/participants/" + clientId).once("value")
+  ]);
   if (!classSnap.exists()) throw new Error("Class not found.");
+  if (partSnap.exists()) throw new Error("You have already booked this class.");
   const cls = classSnap.val();
-  const bSnap = await db.ref("bookings").orderByChild("classId").equalTo(classId).once("value");
+  const countSnap = await db.ref("classes/" + classId + "/participants").once("value");
   let count = 0;
-  let alreadyBooked = false;
-  if (bSnap.exists()) {
-    bSnap.forEach(child => {
-      count++;
-      if (child.val().clientId === clientId) alreadyBooked = true;
-    });
-  }
-  if (alreadyBooked) throw new Error("You have already booked this class.");
+  if (countSnap.exists()) countSnap.forEach(() => count++);
   if (count >= (cls.capacity || 20)) throw new Error("Class is full.");
-  await db.ref("bookings").push().set({ classId, clientId, clientName, createdAt: Date.now() });
+  const bookingRef = db.ref("bookings").push();
+  await Promise.all([
+    bookingRef.set({ classId, clientId, clientName, createdAt: Date.now() }),
+    db.ref("classes/" + classId + "/participants/" + clientId).set({
+      clientName, bookingId: bookingRef.key, joinedAt: Date.now()
+    })
+  ]);
 }
 
 /**
@@ -919,7 +1028,7 @@ async function getClientBookings(clientId) {
   if (!snap.exists()) return [];
   const bookings = [];
   snap.forEach(child => bookings.push({ id: child.key, ...child.val() }));
-  const enriched = await Promise.all(bookings.map(async b => {
+  const enriched = (await Promise.all(bookings.map(async b => {
     const cSnap = await db.ref("classes/" + b.classId).once("value");
     if (cSnap.exists()) {
       const c = cSnap.val();
@@ -927,9 +1036,10 @@ async function getClientBookings(clientId) {
       b.day = c.day;
       b.time = c.time;
       b.trainerName = c.trainerName;
+      return b;
     }
-    return b;
-  }));
+    return null;
+  }))).filter(Boolean);
   return enriched;
 }
 
@@ -937,7 +1047,72 @@ async function getClientBookings(clientId) {
  * Cancel a booking.
  */
 async function cancelBooking(bookingId) {
-  await db.ref("bookings/" + bookingId).remove();
+  const snap = await db.ref("bookings/" + bookingId).once("value");
+  if (snap.exists()) {
+    const { classId, clientId } = snap.val();
+    const ops = [db.ref("bookings/" + bookingId).remove()];
+    if (classId && clientId) ops.push(db.ref("classes/" + classId + "/participants/" + clientId).remove());
+    await Promise.all(ops);
+  }
+}
+
+/**
+ * Get the list of clients enrolled in a class (from participants node).
+ */
+async function getClassRoster(classId) {
+  const snap = await db.ref("classes/" + classId + "/participants").once("value");
+  if (!snap.exists()) return [];
+  const roster = [];
+  snap.forEach(child => roster.push({ clientId: child.key, ...child.val() }));
+  roster.sort((a, b) => (a.joinedAt || 0) - (b.joinedAt || 0));
+  return roster;
+}
+
+/**
+ * Get all trainer IDs that a client has accepted (could be multiple).
+ */
+async function getClientLinkedTrainerIds(clientId) {
+  const ids = new Set();
+
+  // Path 1: client_invites/{clientId} — direct read, no index required, most reliable
+  try {
+    const snap = await db.ref("client_invites/" + clientId).once("value");
+    if (snap.exists()) {
+      snap.forEach(child => {
+        const data = child.val();
+        const status = String(data?.status || "").toLowerCase();
+        const tid = data?.trainerId || child.key; // child.key IS the trainerId
+        if ((status === "accepted" || status === "active") && tid) ids.add(tid);
+      });
+    }
+  } catch (e) { console.warn("[X-Gym] linked-trainers path1 failed:", e.message); }
+
+  // Path 2: client_trainer table (requires index on clientId, kept as fallback)
+  try {
+    const snap = await db.ref("client_trainer").orderByChild("clientId").equalTo(clientId).once("value");
+    if (snap.exists()) {
+      snap.forEach(child => {
+        const data = child.val();
+        const status = String(data?.status || "").toLowerCase();
+        if (data?.trainerId && (!status || status === "active" || status === "accepted")) {
+          ids.add(data.trainerId);
+        }
+      });
+    }
+  } catch (e) { console.warn("[X-Gym] linked-trainers path2 failed:", e.message); }
+
+  // Path 3: trainer_clients table (requires index on clientId, kept as fallback)
+  try {
+    const snap = await db.ref("trainer_clients").orderByChild("clientId").equalTo(clientId).once("value");
+    if (snap.exists()) {
+      snap.forEach(child => {
+        const data = child.val();
+        if (data?.trainerId) ids.add(data.trainerId);
+      });
+    }
+  } catch (e) { console.warn("[X-Gym] linked-trainers path3 failed:", e.message); }
+
+  return [...ids];
 }
 
 // ============================================================
@@ -1354,6 +1529,145 @@ async function getWorkoutSessions(clientId) {
   return result;
 }
 
+// ============================================================
+// SECTION 7D: TRAINING SESSION TRACKING (Trainer ↔ Client)
+// ============================================================
+
+function _calcSessionDuration(startTime, endTime) {
+  // "HH:MM" strings — returns minutes
+  const [sh, sm] = String(startTime || "00:00").split(":").map(Number);
+  const [eh, em] = String(endTime || "01:00").split(":").map(Number);
+  return Math.max(5, (eh * 60 + em) - (sh * 60 + sm));
+}
+
+async function logTrainingSession(trainerId, clientId, data) {
+  const durationMinutes = data.durationMinutes ||
+    (data.startTime && data.endTime ? _calcSessionDuration(data.startTime, data.endTime) : 60);
+  const ref = db.ref("training_sessions").push();
+  await ref.set({
+    trainerId,
+    clientId,
+    date: data.date || new Date().toISOString().split("T")[0],
+    startTime: data.startTime || "",
+    endTime: data.endTime || "",
+    durationMinutes: Math.max(5, Number(durationMinutes) || 60),
+    type: data.type || "Personal Training",
+    notes: data.notes || "",
+    paid: data.paid === true,
+    status: data.status || "completed",
+    createdAt: Date.now()
+  });
+  return ref.key;
+}
+
+async function getTrainerSessions(trainerId) {
+  const snap = await db.ref("training_sessions")
+    .orderByChild("trainerId").equalTo(trainerId).once("value");
+  if (!snap.exists()) return [];
+  const result = [];
+  snap.forEach(child => result.push({ id: child.key, ...child.val() }));
+  result.sort((a, b) => {
+    const da = a.date || "", db2 = b.date || "";
+    return da < db2 ? 1 : da > db2 ? -1 : (b.createdAt || 0) - (a.createdAt || 0);
+  });
+  return result;
+}
+
+async function getClientSessions(clientId) {
+  const snap = await db.ref("training_sessions")
+    .orderByChild("clientId").equalTo(clientId).once("value");
+  if (!snap.exists()) return [];
+  const result = [];
+  snap.forEach(child => result.push({ id: child.key, ...child.val() }));
+  result.sort((a, b) => {
+    const da = a.date || "", db2 = b.date || "";
+    return da < db2 ? 1 : da > db2 ? -1 : (b.createdAt || 0) - (a.createdAt || 0);
+  });
+  return result;
+}
+
+async function updateTrainingSession(sessionId, updates) {
+  await db.ref("training_sessions/" + sessionId).update(updates);
+}
+
+async function deleteTrainingSession(sessionId) {
+  await db.ref("training_sessions/" + sessionId).remove();
+}
+
+async function getTrainerHoursSummary(trainerId) {
+  const sessions = await getTrainerSessions(trainerId);
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+
+  const thisMonth = sessions.filter(s => (s.createdAt || 0) >= monthStart);
+  const totalMinutes = sessions.reduce((sum, s) => sum + (s.durationMinutes || 0), 0);
+  const monthMinutes = thisMonth.reduce((sum, s) => sum + (s.durationMinutes || 0), 0);
+
+  const perClient = {};
+  for (const s of sessions) {
+    const cid = s.clientId;
+    if (!perClient[cid]) perClient[cid] = { sessions: 0, minutes: 0, paidSessions: 0 };
+    perClient[cid].sessions++;
+    perClient[cid].minutes += s.durationMinutes || 0;
+    if (s.paid) perClient[cid].paidSessions++;
+  }
+
+  return {
+    totalHours: totalMinutes / 60,
+    monthHours: monthMinutes / 60,
+    totalSessions: sessions.length,
+    monthSessions: thisMonth.length,
+    perClient
+  };
+}
+
+// ============================================================
+// SECTION 6D: CLASS WAITLIST & ATTENDANCE
+// ============================================================
+
+async function addToWaitlist(classId, clientId, clientName) {
+  const snap = await db.ref("waitlist/" + classId + "/" + clientId).once("value");
+  if (snap.exists()) throw new Error("You are already on the waitlist.");
+  await db.ref("waitlist/" + classId + "/" + clientId).set({
+    clientName, joinedAt: Date.now()
+  });
+}
+
+async function removeFromWaitlist(classId, clientId) {
+  await db.ref("waitlist/" + classId + "/" + clientId).remove();
+}
+
+async function getWaitlist(classId) {
+  const snap = await db.ref("waitlist/" + classId).once("value");
+  if (!snap.exists()) return [];
+  const result = [];
+  snap.forEach(child => result.push({ clientId: child.key, ...child.val() }));
+  result.sort((a, b) => (a.joinedAt || 0) - (b.joinedAt || 0));
+  return result;
+}
+
+async function promoteFromWaitlist(classId) {
+  const waitlist = await getWaitlist(classId);
+  if (!waitlist.length) return null;
+  const first = waitlist[0];
+  try {
+    await bookClass(classId, first.clientId, first.clientName);
+    await removeFromWaitlist(classId, first.clientId);
+    return first;
+  } catch (e) { return null; }
+}
+
+async function markAttendance(classId, clientId, attended) {
+  await db.ref("attendance/" + classId + "/" + clientId).set({
+    attended: !!attended, markedAt: Date.now()
+  });
+}
+
+async function getClassAttendance(classId) {
+  const snap = await db.ref("attendance/" + classId).once("value");
+  return snap.exists() ? (snap.val() || {}) : {};
+}
+
 /**
  * Get weekly workout stats for a client.
  * @param {string} clientId
@@ -1562,7 +1876,7 @@ function initIndexPage() {
     }
 
     // Already logged in — DEV/TEST MODE: stay on index, don't auto-redirect
-    console.log("[X-Gym] Index: user logged in, profile:", profile, "— skipping auto-redirect (test mode)");
+    console.log("[X-Gym] Index: user logged in — skipping auto-redirect (test mode)");
     _clearRedirectLoop();
   });
 }
@@ -1748,6 +2062,7 @@ async function initClientPage() {
   if (logoutBtnEarly) logoutBtnEarly.addEventListener("click", logoutUser);
 
   const user = await waitForAuth();
+  if (user) _syncPendingStoreActions(user.uid);
   if (!user) {
     // DEV/TEST MODE: skip redirect so pages can be opened directly
     console.warn("[X-Gym] Client page: no user logged in — skipping redirect (test mode)");
@@ -1825,21 +2140,30 @@ async function initClientPage() {
     _bindCardToPanel("card-progress",   "panel-progress");
     _bindCardToPanel("card-biography",  "panel-biography");
     _bindCardToPanel("card-store",      "panel-pick-trainer");
-    _bindCardToPanel("card-booking",     "panel-booking");
     _bindCardToPanel("card-pick-trainer","panel-pick-trainer");
     _bindCardToPanel("card-settings",   "panel-settings");
     _bindCardToPanel("card-messenger",   "panel-messenger");
+    // Booking: reload on every open (card OR sidebar nav)
+    _bindCardToPanelWithReload("card-booking", "panel-booking",
+      () => _loadClientBookingPanel(user.uid, profile.name));
+
+    // Sidebar nav for booking must also reload
+    document.querySelectorAll('.nav-item[data-panel="panel-booking"]').forEach(item => {
+      item.addEventListener('click', () => _loadClientBookingPanel(user.uid, profile.name));
+    });
 
     // Load panels content
     _loadClientWorkoutsPanel(user.uid);
     _loadClientProgressPanel(user.uid, profile.shareCode);
     _loadClientMealsPanel(user.uid);
     _loadClientMembershipPanel(user.uid);
-    _loadCartPanel();
+    _loadCartPanel(user.uid);
     _loadClientBookingPanel(user.uid, profile.name);
     _loadPickTrainerPanel(user.uid);
     _loadClientBiographyPanel(user.uid);
     _loadClientMessengerPanel(user.uid, profile.name);
+    _loadSettingsPanel(user.uid);
+    _startClientNotifListeners(user.uid);
   }
 }
 
@@ -1856,6 +2180,24 @@ function _bindCardToPanel(cardId, panelId) {
     // Show the target panel
     panel.style.display = "block";
     panel.scrollIntoView({ behavior: "smooth" });
+  });
+}
+
+/**
+ * Like _bindCardToPanel but calls `onOpen()` every time the card is clicked,
+ * so the panel reloads fresh data on every open.
+ */
+function _bindCardToPanelWithReload(cardId, panelId, onOpen) {
+  const card  = document.getElementById(cardId);
+  const panel = document.getElementById(panelId);
+  if (!card || !panel) return;
+  card.addEventListener("click", () => {
+    document.querySelectorAll(".xgym-panel").forEach(p => p.style.display = "none");
+    const grid = document.querySelector(".grid");
+    if (grid) grid.style.display = "none";
+    panel.style.display = "block";
+    panel.scrollIntoView({ behavior: "smooth" });
+    if (onOpen) onOpen();
   });
 }
 
@@ -2503,24 +2845,56 @@ async function _loadClientMembershipPanel(clientId) {
       ? membership
       : null;
 
+    const daysRemaining = activeMembership ? daysLeft(activeMembership.expiresAt) : 0;
+    const expiryWarning = activeMembership && daysRemaining <= 7
+      ? `<div style="margin-bottom:14px;padding:12px 18px;border-radius:10px;
+          background:rgba(255,80,0,0.12);border:1px solid rgba(255,80,0,0.35);
+          display:flex;align-items:center;gap:12px">
+          <span style="font-size:1.3rem">⚠️</span>
+          <div>
+            <strong style="color:#e96d25">Membership Expiring Soon</strong>
+            <div style="font-size:0.84rem;opacity:0.8">
+              Your ${activeMembership.type || "membership"} expires in
+              <strong style="color:#e96d25">${daysRemaining} day${daysRemaining !== 1 ? "s" : ""}</strong>.
+              Renew below to keep your access.
+            </div>
+          </div>
+        </div>`
+      : "";
+
+    const tierColors = { "Elite": "#7c4dff", "Core": "#0887e2", "Starter": "#00c853" };
+    const tierColor = activeMembership ? (tierColors[activeMembership.type] || "#0887e2") : "#ff0033";
+
     panel.innerHTML = `
       <h2 style="color:#0887e2">Membership Hub</h2>
 
-      <div class="card" style="margin-bottom:20px;cursor:default">
+      ${expiryWarning}
+
+      <div class="card" style="margin-bottom:20px;cursor:default;border-left:3px solid ${tierColor}">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap">
           <div>
-            <h3 style="margin-bottom:8px">${activeMembership ? (activeMembership.type || "Membership") : "No Active Membership"}</h3>
+            <h3 style="margin-bottom:8px">
+              ${activeMembership ? (activeMembership.type || "Membership") : "No Active Membership"}
+              ${activeMembership ? `<span style="display:inline-block;margin-left:8px;padding:2px 10px;border-radius:20px;font-size:0.7rem;font-weight:700;background:${tierColor}22;color:${tierColor}">${activeMembership.type ? activeMembership.type.toUpperCase() : "MEMBER"}</span>` : ""}
+            </h3>
             <p style="opacity:0.78">Status:
               <strong style="color:${activeMembership ? "#00c850" : "#ff0033"};text-transform:uppercase">
                 ${activeMembership ? "active" : "inactive"}
               </strong>
             </p>
             <p style="opacity:0.78">Expiry: ${activeMembership ? formatDate(activeMembership.expiresAt) : "—"}</p>
-            <p style="opacity:0.78">Days Left: ${activeMembership ? daysLeft(activeMembership.expiresAt) : 0}</p>
+            <p style="opacity:0.78">Days Left: <strong style="color:${daysRemaining <= 7 && activeMembership ? "#e96d25" : "inherit"}">${daysRemaining}</strong></p>
           </div>
-          <div style="min-width:180px;text-align:right">
-            <div style="font-size:0.82rem;opacity:0.65">Latest Payment</div>
-            <div style="font-size:1.4rem;font-weight:700;color:#e96d25">${payments[0] ? toMoney(payments[0].amount) : "—"}</div>
+          <div style="text-align:right;display:flex;flex-direction:column;align-items:flex-end;gap:10px">
+            <div>
+              <div style="font-size:0.82rem;opacity:0.65">Latest Payment</div>
+              <div style="font-size:1.4rem;font-weight:700;color:#e96d25">${payments[0] ? toMoney(payments[0].amount) : "—"}</div>
+            </div>
+            ${activeMembership ? `<button id="cm-cancel-membership-btn"
+              style="padding:7px 16px;border:1px solid rgba(255,0,51,0.4);border-radius:8px;
+              background:transparent;color:#ff5577;cursor:pointer;font-family:inherit;font-size:0.82rem">
+              Cancel Membership
+            </button>` : ""}
           </div>
         </div>
       </div>
@@ -2542,6 +2916,28 @@ async function _loadClientMembershipPanel(clientId) {
       </div>
     `;
 
+    // Cancel membership handler
+    const cancelMemBtn = document.getElementById("cm-cancel-membership-btn");
+    if (cancelMemBtn && activeMembership) {
+      cancelMemBtn.addEventListener("click", () => {
+        showModal("Cancel Membership",
+          `<p>Are you sure you want to cancel your <strong>${activeMembership.type || "membership"}</strong>?</p>
+           <p style="opacity:0.7;font-size:0.88rem">Access will remain until <strong>${formatDate(activeMembership.expiresAt)}</strong>.</p>`,
+          async () => {
+            try {
+              await updateMembership(activeMembership.id, {
+                status: "cancelled",
+                cancelledAt: Date.now(),
+                cancelReason: "Cancelled by client"
+              });
+              showToast("Membership cancelled. Access remains until expiry.", "info");
+              _loadClientMembershipPanel(clientId);
+            } catch (e) { showToast(e.message, "error"); }
+          }
+        );
+      });
+    }
+
     const plansGrid = document.getElementById("cm-plans-grid");
     const checkout  = document.getElementById("cm-checkout");
     const payList   = document.getElementById("cm-payments-list");
@@ -2560,26 +2956,45 @@ async function _loadClientMembershipPanel(clientId) {
       `).join("");
     }
 
-    function renderCheckout(plan) {
+    async function renderCheckout(plan) {
       if (!plan) {
         checkout.innerHTML = "";
         return;
       }
 
+      checkout.innerHTML = `<div style="text-align:center;padding:14px;opacity:0.5">Loading payment options…</div>`;
+
+      let savedCards = [];
+      try { savedCards = await getPaymentCards(clientId); } catch (e) { /* no cards yet */ }
+      const defaultCard = savedCards.find(c => c.isDefault) || savedCards[0] || null;
+
+      const iStyle = `padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:inherit;font-family:inherit;width:100%;box-sizing:border-box`;
+
       checkout.innerHTML = `
         <div class="card" style="cursor:default">
           <h3 style="margin-bottom:8px">Checkout — ${plan.name}</h3>
           <p style="opacity:0.72;margin-bottom:12px">Duration: ${plan.durationDays || 30} days · Total: <strong>${toMoney(plan.price)}</strong></p>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-            <input id="cm-card-name" type="text" placeholder="Cardholder Name"
-              style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:inherit;font-family:inherit">
-            <input id="cm-card-number" type="text" placeholder="Card Number (mock)"
-              style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:inherit;font-family:inherit">
-            <input id="cm-card-exp" type="text" placeholder="MM/YY"
-              style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:inherit;font-family:inherit">
-            <input id="cm-card-cvc" type="text" placeholder="CVC"
-              style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:inherit;font-family:inherit">
+
+          ${defaultCard ? `
+            <div style="margin-bottom:12px;padding:10px 14px;border-radius:8px;background:rgba(8,165,226,0.08);border:1px solid rgba(8,165,226,0.3)">
+              <div style="font-size:0.82rem;opacity:0.65;margin-bottom:3px">Using saved card:</div>
+              <strong style="font-size:0.92rem">${defaultCard.cardHolder} — •••• ${defaultCard.last4} (${defaultCard.expiry})</strong>
+              <div style="margin-top:6px"><label style="font-size:0.8rem;cursor:pointer"><input type="checkbox" id="cm-use-new"> Use a different card</label></div>
+            </div>
+          ` : ""}
+
+          <div id="cm-new-card-section" style="${defaultCard ? "display:none" : ""}">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+              <input id="cm-card-name" type="text" placeholder="Cardholder Name" style="${iStyle}">
+              <input id="cm-card-number" type="text" placeholder="Card Number" maxlength="19" style="${iStyle}">
+              <input id="cm-card-exp" type="text" placeholder="MM/YY" maxlength="5" style="${iStyle}">
+              <input id="cm-card-cvc" type="password" placeholder="CVC" maxlength="4" style="${iStyle}">
+            </div>
+            <label style="font-size:0.82rem;cursor:pointer;display:flex;align-items:center;gap:6px;margin-bottom:10px">
+              <input type="checkbox" id="cm-save-card"> Save this card for future payments
+            </label>
           </div>
+
           <div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap">
             <button id="cm-pay-btn" style="padding:10px 20px;border:none;border-radius:8px;background:linear-gradient(90deg,#00c853,#009944);color:#fff;cursor:pointer;font-weight:700">Pay & Activate</button>
             <button id="cm-cancel-btn" style="padding:10px 20px;border:1px solid rgba(255,255,255,0.2);border-radius:8px;background:transparent;color:inherit;cursor:pointer">Cancel</button>
@@ -2587,19 +3002,66 @@ async function _loadClientMembershipPanel(clientId) {
         </div>
       `;
 
+      if (defaultCard) {
+        document.getElementById("cm-use-new").addEventListener("change", e => {
+          document.getElementById("cm-new-card-section").style.display = e.target.checked ? "block" : "none";
+        });
+      }
+
+      // Card number auto-spacing (groups of 4)
+      const cardNumEl = document.getElementById("cm-card-number");
+      if (cardNumEl) {
+        cardNumEl.addEventListener("input", () => {
+          let v = cardNumEl.value.replace(/\D/g, "").slice(0, 16);
+          cardNumEl.value = v.replace(/(.{4})/g, "$1 ").trim();
+        });
+      }
+      // Expiry auto-slash
+      const cardExpEl = document.getElementById("cm-card-exp");
+      if (cardExpEl) {
+        cardExpEl.addEventListener("input", () => {
+          let v = cardExpEl.value.replace(/\D/g, "").slice(0, 4);
+          if (v.length >= 3) v = v.slice(0, 2) + "/" + v.slice(2);
+          cardExpEl.value = v;
+        });
+      }
+
       document.getElementById("cm-cancel-btn").addEventListener("click", () => renderCheckout(null));
       document.getElementById("cm-pay-btn").addEventListener("click", async () => {
-        const cardName = (document.getElementById("cm-card-name").value || "").trim();
-        const cardNum  = (document.getElementById("cm-card-number").value || "").replace(/\s+/g, "");
-        const cardExp  = (document.getElementById("cm-card-exp").value || "").trim();
-        const cardCvc  = (document.getElementById("cm-card-cvc").value || "").trim();
+        const payBtn = document.getElementById("cm-pay-btn");
 
-        if (!cardName || cardNum.length < 12 || !/^(0[1-9]|1[0-2])\/\d{2}$/.test(cardExp) || !/^\d{3,4}$/.test(cardCvc)) {
-          showToast("Enter valid payment details.", "error");
-          return;
+        const useNewCard = !defaultCard || (document.getElementById("cm-use-new")?.checked);
+        let cardName, cardNum, cardExp;
+
+        if (useNewCard) {
+          cardName = (document.getElementById("cm-card-name")?.value || "").trim();
+          cardNum  = (document.getElementById("cm-card-number")?.value || "").replace(/\s+/g, "");
+          cardExp  = (document.getElementById("cm-card-exp")?.value || "").trim();
+          const cardCvc = (document.getElementById("cm-card-cvc")?.value || "").trim();
+          if (!cardName || cardNum.length < 12 || !/^(0[1-9]|1[0-2])\/\d{2}$/.test(cardExp) || !/^\d{3,4}$/.test(cardCvc)) {
+            showToast("Enter valid payment details.", "error");
+            return;
+          }
+        } else {
+          cardNum  = defaultCard.cardNumber;
+          cardName = defaultCard.cardHolder;
+          cardExp  = defaultCard.expiry;
         }
 
+        if (payBtn.disabled) return;
+        payBtn.disabled = true;
+        payBtn.textContent = "Processing…";
+
         try {
+          // Save card if requested
+          if (useNewCard && document.getElementById("cm-save-card")?.checked) {
+            const newId = await savePaymentCard(clientId, {
+              cardHolder: cardName, cardNumber: cardNum, last4: cardNum.slice(-4),
+              expiry: cardExp, isDefault: savedCards.length === 0
+            });
+            if (savedCards.length === 0) await setDefaultCard(clientId, newId);
+          }
+
           const allMemberships = await getAllMemberships();
           const currentlyActive = allMemberships.filter(m => m.clientId === clientId && (m.status || "active") === "active" && (!m.expiresAt || m.expiresAt >= Date.now()));
           for (const m of currentlyActive) {
@@ -2643,6 +3105,8 @@ async function _loadClientMembershipPanel(clientId) {
           _loadClientMembershipPanel(clientId);
         } catch (e) {
           showToast(e.message, "error");
+          const pb = document.getElementById("cm-pay-btn");
+          if (pb) { pb.disabled = false; pb.textContent = "Pay & Activate"; }
         }
       });
     }
@@ -2673,7 +3137,8 @@ async function _loadClientMembershipPanel(clientId) {
       plansGrid.querySelectorAll(".cm-buy-btn").forEach(btn => {
         btn.addEventListener("click", () => {
           const plan = plans.find(p => p.id === btn.dataset.plan);
-          renderCheckout(plan || null);
+          if (!plan) { showToast("Plan not found. Please refresh.", "error"); return; }
+          renderCheckout(plan);
         });
       });
     }
@@ -2686,221 +3151,839 @@ async function _loadClientMembershipPanel(clientId) {
   }
 }
 
-function _loadCartPanel() {
+// Navigate to XGYM_Cart.html — writes full session context to sessionStorage
+async function _openStore(uid) {
+  try {
+    if (uid) {
+      const [profile, cards, plans, storeItems] = await Promise.all([
+        getUserProfile(uid).catch(() => null),
+        getPaymentCards(uid).catch(() => []),
+        getMembershipPlans().catch(() => []),
+        getAllStoreItems().catch(() => [])
+      ]);
+      const fireUser = auth.currentUser;
+      sessionStorage.setItem("xgym_user", JSON.stringify({
+        uid,
+        name:  profile?.name  || "",
+        email: fireUser?.email || profile?.email || "",
+        role:  profile?.role  || "client"
+      }));
+      sessionStorage.setItem("xgym_cards",       JSON.stringify(cards       || []));
+      sessionStorage.setItem("xgym_plans",       JSON.stringify(plans       || []));
+      sessionStorage.setItem("xgym_store_items", JSON.stringify(storeItems  || []));
+    }
+  } catch (e) { /* proceed anyway */ }
+  window.location.href = "XGYM_Cart.html";
+}
+
+// On page init: sync any card, membership purchases, or orders saved during a store visit
+async function _syncPendingStoreActions(uid) {
+  if (!uid) return;
+  const _oneDay = 86400000;
+
+  // ── 1. Sync saved card ──────────────────────────────────────
+  try {
+    const raw = sessionStorage.getItem("xgym_pending_card");
+    if (raw) {
+      sessionStorage.removeItem("xgym_pending_card");
+      const c = JSON.parse(raw);
+      if (c.cardHolder && c.cardNumber) {
+        const existing = await getPaymentCards(uid).catch(() => []);
+        const already = existing.some(e => e.last4 === c.cardNumber.slice(-4) && e.expiry === c.expiry);
+        if (!already) {
+          const newId = await savePaymentCard(uid, {
+            cardHolder: c.cardHolder, cardNumber: c.cardNumber,
+            last4: c.cardNumber.slice(-4), expiry: c.expiry, isDefault: existing.length === 0
+          });
+          if (existing.length === 0) await setDefaultCard(uid, newId);
+          showToast("Card from your store checkout was saved to your wallet!", "success");
+        }
+      }
+    }
+  } catch (e) { /* ignore */ }
+
+  // ── 2. Sync membership purchases from store ─────────────────
+  try {
+    const msRaw = sessionStorage.getItem("xgym_pending_memberships");
+    if (msRaw) {
+      sessionStorage.removeItem("xgym_pending_memberships");
+      const memberships = JSON.parse(msRaw);
+      for (const m of memberships) {
+        // Cancel any currently active membership
+        const allM = await getAllMemberships().catch(() => []);
+        const active = allM.filter(x => x.clientId === uid && (x.status || "active") === "active" && (!x.expiresAt || x.expiresAt >= Date.now()));
+        for (const ex of active) {
+          await updateMembership(ex.id, { status: "cancelled", cancelledAt: Date.now(), cancelReason: "Replaced by store purchase" });
+        }
+        const startedAt = Date.now();
+        const expiresAt = startedAt + (Number(m.durationDays) || 30) * _oneDay;
+        const membershipId = await createMembership({
+          clientId: uid, planId: m.planId, type: m.name, status: "active",
+          startedAt, durationDays: Number(m.durationDays) || 30, expiresAt,
+          price: Number(m.price) || 0, paymentMethod: m.paymentMethod || "card"
+        });
+        await createMembershipPayment({
+          clientId: uid, membershipId, planId: m.planId, planName: m.name,
+          membershipType: m.name, amount: Number(m.price) || 0,
+          method: m.paymentMethod || "card", status: "paid",
+          maskedCard: m.maskedCard || ""
+        });
+        await recordTransaction({
+          type: "membership", amount: Number(m.price) || 0,
+          description: `${m.name} membership (store purchase)`, category: "membership"
+        });
+      }
+      if (memberships.length > 0) {
+        showToast("Membership from your store purchase has been activated!", "success");
+        // Reload membership panel if it's currently visible
+        const mPanel = document.getElementById("panel-membership");
+        const currentUser = auth.currentUser;
+        if (mPanel && mPanel.style.display !== "none" && currentUser) {
+          _loadClientMembershipPanel(currentUser.uid);
+        }
+      }
+    }
+  } catch (e) { /* ignore */ }
+
+  // ── 3. Persist store orders into sessionStorage order history ─
+  try {
+    const ordersRaw = sessionStorage.getItem("xgym_pending_orders");
+    if (ordersRaw) {
+      const orders = JSON.parse(ordersRaw);
+      for (const o of orders) {
+        await recordTransaction({
+          type: "store_purchase", amount: Number(o.amount) || 0,
+          description: "Store purchase: " + o.items, category: "store"
+        });
+      }
+      sessionStorage.removeItem("xgym_pending_orders");
+    }
+  } catch (e) { /* ignore */ }
+}
+
+async function _loadCartPanel(uid) {
   const panel = document.getElementById("panel-cart");
   if (!panel) return;
 
-  function render() {
+  panel.innerHTML = `<div style="text-align:center;padding:30px;opacity:0.5">Loading store…</div>`;
+
+  let storeItems = [];
+  try { storeItems = await getAllStoreItems(); } catch (e) { /* ignore */ }
+
+  const iStyle = `padding:9px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:inherit;font-family:inherit;font-size:0.86rem`;
+
+  async function render() {
     const cart = getCart();
+    const total = cart.reduce((s, i) => s + i.price * i.qty, 0);
+
     panel.innerHTML = `
-      <h2 style="color:#0887e2">My Cart</h2>
-      ${cart.length === 0
-        ? "<p>Your cart is empty.</p>"
-        : cart.map(item => `
-            <div class="card" style="margin-bottom:12px;display:flex;align-items:center;justify-content:space-between">
-              <span>${item.name} × ${item.qty}</span>
-              <span>£${(item.price * item.qty).toFixed(2)}</span>
-              <button data-id="${item.id}" class="remove-cart-btn"
-                style="padding:6px 14px;border:none;border-radius:6px;
-                       background:rgba(255,0,60,0.6);color:#fff;cursor:pointer">
-                Remove
-              </button>
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:20px">
+        <h2 style="color:#0887e2;margin:0">My Cart</h2>
+        <button id="cart-goto-store-btn" style="padding:8px 18px;border:1px solid rgba(8,165,226,0.5);border-radius:8px;background:rgba(8,165,226,0.08);color:#0887e2;font-size:0.85rem;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px;font-family:Poppins,sans-serif">&#128722; Go to Store</button>
+      </div>
+
+      <div class="card" style="margin-bottom:20px;cursor:default">
+        <h3 style="margin-bottom:12px">Cart Items</h3>
+        ${cart.length === 0
+          ? `<p style="opacity:0.55">Your cart is empty. Browse the store below to add items.</p>`
+          : cart.map(item => `
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.07)">
+              <div style="flex:1"><strong>${item.name}</strong><span style="opacity:0.6;font-size:0.82rem;margin-left:8px">× ${item.qty}</span></div>
+              <strong style="color:#e96d25">£${(item.price * item.qty).toFixed(2)}</strong>
+              <button class="cart-remove-btn" data-id="${item.id}" style="padding:4px 10px;border:1px solid rgba(255,0,51,0.4);border-radius:6px;background:transparent;color:#ff5577;cursor:pointer;font-size:0.75rem">✕</button>
+            </div>`).join("")
+        }
+        ${cart.length > 0 ? `
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.1)">
+            <span style="font-weight:700;font-size:1.05rem">Total: <span style="color:#00c853">£${total.toFixed(2)}</span></span>
+            <div style="display:flex;gap:8px">
+              <button id="cart-clear-btn" style="padding:8px 14px;border:1px solid rgba(255,255,255,0.2);border-radius:8px;background:transparent;color:inherit;cursor:pointer;font-size:0.82rem">Clear</button>
+              <button id="cart-checkout-btn" style="padding:8px 18px;border:none;border-radius:8px;background:linear-gradient(90deg,#00c853,#009944);color:#fff;cursor:pointer;font-weight:700;font-size:0.88rem">Checkout</button>
             </div>
-          `).join("")
-      }
-      ${cart.length > 0 ? `
-        <p style="text-align:right;font-size:1.1rem">
-          Total: £${cart.reduce((s,i) => s + i.price*i.qty, 0).toFixed(2)}
-        </p>
-        <button id="clear-cart-btn"
-          style="padding:10px 24px;border:none;border-radius:8px;
-                 background:rgba(255,255,255,0.1);color:#fff;cursor:pointer">
-          Clear Cart
-        </button>
-      ` : ""}
+          </div>
+        ` : ""}
+      </div>
+
+      <div class="card" style="cursor:default;margin-bottom:20px">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px">
+          <h3 style="margin:0">X-Gym Store</h3>
+          <input id="cart-store-search" type="text" placeholder="Search items…" style="${iStyle};min-width:180px">
+        </div>
+        <div id="cart-store-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px"></div>
+      </div>
+
+      <div id="cart-checkout-form"></div>
     `;
-    panel.querySelectorAll(".remove-cart-btn").forEach(btn => {
+
+    // Cart actions
+    panel.querySelectorAll(".cart-remove-btn").forEach(btn => {
       btn.addEventListener("click", () => { removeFromCart(btn.dataset.id); render(); });
     });
-    const clearBtn = document.getElementById("clear-cart-btn");
+    const clearBtn = document.getElementById("cart-clear-btn");
     if (clearBtn) clearBtn.addEventListener("click", () => { clearCart(); render(); });
+
+    const gotoStoreBtn = document.getElementById("cart-goto-store-btn");
+    if (gotoStoreBtn) gotoStoreBtn.addEventListener("click", () => _openStore(uid));
+
+    // Checkout
+    const checkoutBtn = document.getElementById("cart-checkout-btn");
+    if (checkoutBtn) {
+      checkoutBtn.addEventListener("click", async () => {
+        const cf = document.getElementById("cart-checkout-form");
+        let savedCards = [];
+        if (uid) { try { savedCards = await getPaymentCards(uid); } catch (e) { /* no cards */ } }
+        const defaultCard = savedCards.find(c => c.isDefault) || savedCards[0] || null;
+
+        cf.innerHTML = `
+          <div class="card" style="cursor:default">
+            <h3 style="margin-bottom:10px">Checkout — £${total.toFixed(2)}</h3>
+            ${defaultCard ? `
+              <div style="margin-bottom:12px;padding:10px 14px;border-radius:8px;background:rgba(8,165,226,0.08);border:1px solid rgba(8,165,226,0.3)">
+                <div style="font-size:0.82rem;opacity:0.65;margin-bottom:2px">Using saved card:</div>
+                <strong>${defaultCard.cardHolder} — •••• ${defaultCard.last4} (${defaultCard.expiry})</strong>
+                <div style="margin-top:6px"><label style="font-size:0.8rem;cursor:pointer"><input type="checkbox" id="cart-use-new"> Use a different card</label></div>
+              </div>
+            ` : ""}
+            <div id="cart-new-card-section" style="${defaultCard ? "display:none" : ""}">
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+                <input id="cart-cholder" type="text" placeholder="Cardholder Name" style="${iStyle}">
+                <input id="cart-cnum" type="text" placeholder="Card Number" style="${iStyle}" maxlength="19">
+                <input id="cart-cexp" type="text" placeholder="MM/YY" style="${iStyle}" maxlength="5">
+                <input id="cart-ccvc" type="password" placeholder="CVC" style="${iStyle}" maxlength="4">
+              </div>
+              ${uid ? `<label style="font-size:0.82rem;cursor:pointer;display:flex;align-items:center;gap:6px;margin-bottom:10px"><input type="checkbox" id="cart-save-card"> Save card for future purchases</label>` : ""}
+            </div>
+            <div style="display:flex;gap:10px">
+              <button id="cart-pay-btn" style="padding:9px 22px;border:none;border-radius:8px;background:linear-gradient(90deg,#00c853,#009944);color:#fff;cursor:pointer;font-weight:700">Pay Now</button>
+              <button id="cart-pay-cancel" style="padding:9px 16px;border:1px solid rgba(255,255,255,0.2);border-radius:8px;background:transparent;color:inherit;cursor:pointer">Cancel</button>
+            </div>
+          </div>
+        `;
+        cf.scrollIntoView({ behavior: "smooth" });
+
+        if (defaultCard) {
+          document.getElementById("cart-use-new").addEventListener("change", e => {
+            document.getElementById("cart-new-card-section").style.display = e.target.checked ? "block" : "none";
+          });
+        }
+        const cn = document.getElementById("cart-cnum");
+        if (cn) cn.addEventListener("input", () => { let v = cn.value.replace(/\D/g,"").slice(0,16); cn.value = v.replace(/(.{4})/g,"$1 ").trim(); });
+        const ce = document.getElementById("cart-cexp");
+        if (ce) ce.addEventListener("input", () => { let v = ce.value.replace(/\D/g,"").slice(0,4); if(v.length>=3) v=v.slice(0,2)+"/"+v.slice(2); ce.value=v; });
+
+        document.getElementById("cart-pay-cancel").addEventListener("click", () => { cf.innerHTML = ""; });
+        document.getElementById("cart-pay-btn").addEventListener("click", async () => {
+          const payBtn = document.getElementById("cart-pay-btn");
+          const useNewCard = !defaultCard || (document.getElementById("cart-use-new")?.checked);
+          let cardNum, cardHolder, cardExp;
+
+          if (useNewCard) {
+            cardHolder = (document.getElementById("cart-cholder")?.value || "").trim();
+            cardNum    = (document.getElementById("cart-cnum")?.value || "").replace(/\s+/g,"");
+            cardExp    = (document.getElementById("cart-cexp")?.value || "").trim();
+            const cardCvc = (document.getElementById("cart-ccvc")?.value || "").trim();
+            if (!cardHolder || cardNum.length < 12 || !/^(0[1-9]|1[0-2])\/\d{2}$/.test(cardExp) || !/^\d{3,4}$/.test(cardCvc)) {
+              showToast("Please enter valid card details.", "error"); return;
+            }
+          } else {
+            cardNum    = defaultCard.cardNumber;
+            cardHolder = defaultCard.cardHolder;
+            cardExp    = defaultCard.expiry;
+          }
+
+          if (payBtn.disabled) return;
+          payBtn.disabled = true; payBtn.textContent = "Processing…";
+
+          try {
+            if (useNewCard && uid && document.getElementById("cart-save-card")?.checked) {
+              const newId = await savePaymentCard(uid, { cardHolder, cardNumber: cardNum, last4: cardNum.slice(-4), expiry: cardExp, isDefault: savedCards.length === 0 });
+              if (savedCards.length === 0) await setDefaultCard(uid, newId);
+            }
+            await recordTransaction({ type: "store_purchase", amount: total, description: "Cart purchase: " + cart.map(i => i.name).join(", "), category: "store" });
+            clearCart();
+            cf.innerHTML = `
+              <div class="card" style="cursor:default;text-align:center;padding:24px">
+                <div style="font-size:2.2rem;margin-bottom:8px">&#10003;</div>
+                <h3>Payment Successful!</h3>
+                <p style="opacity:0.7">Your order has been placed. Total: <strong>£${total.toFixed(2)}</strong></p>
+              </div>`;
+            render();
+          } catch (e) {
+            showToast(e.message, "error");
+            const pb = document.getElementById("cart-pay-btn");
+            if (pb) { pb.disabled = false; pb.textContent = "Pay Now"; }
+          }
+        });
+      });
+    }
+
+    // Store grid
+    function renderStore(q) {
+      const grid = document.getElementById("cart-store-grid");
+      if (!grid) return;
+      const filtered = storeItems.filter(i => {
+        if (!q) return true;
+        return [i.name || "", i.description || "", i.category || ""].join(" ").toLowerCase().includes(q.toLowerCase());
+      });
+      if (!filtered.length) {
+        grid.innerHTML = `<p style="opacity:0.55;grid-column:1/-1">No items found${q ? ' for "' + q + '"' : ""}.</p>`;
+        return;
+      }
+      grid.innerHTML = filtered.map(item => `
+        <div class="card" style="cursor:default;display:flex;flex-direction:column;gap:8px;padding:16px">
+          <div style="font-size:0.72rem;opacity:0.55;text-transform:uppercase;letter-spacing:1px">${item.category || "General"}</div>
+          <strong style="font-size:0.95rem">${item.name}</strong>
+          <p style="font-size:0.82rem;opacity:0.7;margin:0;flex:1">${item.description || ""}</p>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px">
+            <span style="font-weight:700;color:#00c853;font-size:1.05rem">£${(item.price || 0).toFixed(2)}</span>
+            <span style="font-size:0.78rem;opacity:0.55">${item.stock != null ? "Stock: " + item.stock : ""}</span>
+          </div>
+          <button class="cart-add-item-btn" data-id="${item.id}" data-name="${item.name}" data-price="${item.price || 0}"
+            style="padding:7px;border:none;border-radius:8px;background:linear-gradient(90deg,#0887e2,#006af5);color:#fff;cursor:pointer;font-size:0.83rem;font-weight:600">
+            Add to Cart
+          </button>
+        </div>
+      `).join("");
+
+      grid.querySelectorAll(".cart-add-item-btn").forEach(btn => {
+        btn.addEventListener("click", () => {
+          addToCart({ id: btn.dataset.id, name: btn.dataset.name, price: parseFloat(btn.dataset.price) || 0 });
+          showToast(btn.dataset.name + " added to cart!", "success");
+          render();
+        });
+      });
+    }
+
+    const searchEl = document.getElementById("cart-store-search");
+    if (searchEl) searchEl.addEventListener("input", e => renderStore(e.target.value));
+    renderStore("");
   }
 
   render();
 }
 
 // --------------------------------------------------------
+// Card Wallet UI — reusable card management panel
+// --------------------------------------------------------
+async function _loadCardWalletPanel(uid, container) {
+  if (!container) return;
+
+  const iStyle = `width:100%;box-sizing:border-box;padding:9px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:inherit;font-family:inherit;font-size:0.88rem`;
+
+  function cardBrand(num) {
+    if (!num) return "Card";
+    if (/^4/.test(num)) return "Visa";
+    if (/^5[1-5]/.test(num)) return "Mastercard";
+    if (/^3[47]/.test(num)) return "Amex";
+    return "Card";
+  }
+
+  async function render() {
+    let cards = [];
+    try { cards = await getPaymentCards(uid); } catch (e) { /* no cards */ }
+
+    container.innerHTML = `
+      <div class="card" style="cursor:default">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+          <h3 style="margin:0">&#128179; Payment Cards</h3>
+          <button id="cwp-add-toggle" style="padding:7px 16px;border:none;border-radius:8px;background:linear-gradient(90deg,#0887e2,#006af5);color:#fff;cursor:pointer;font-size:0.85rem;font-weight:600">+ Add Card</button>
+        </div>
+
+        <div id="cwp-add-form" style="display:none;margin-bottom:16px;padding:14px;border:1px solid rgba(8,165,226,0.25);border-radius:10px;background:rgba(8,165,226,0.04)">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+            <input id="cwp-holder" type="text" placeholder="Cardholder Name" style="${iStyle}">
+            <input id="cwp-num" type="text" placeholder="Card Number" maxlength="19" style="${iStyle}">
+            <input id="cwp-exp" type="text" placeholder="MM/YY" maxlength="5" style="${iStyle}">
+            <input id="cwp-cvc" type="password" placeholder="CVC" maxlength="4" style="${iStyle}">
+          </div>
+          <label style="display:flex;align-items:center;gap:8px;font-size:0.84rem;opacity:0.8;cursor:pointer;margin-bottom:10px">
+            <input id="cwp-set-default" type="checkbox"> Set as default card
+          </label>
+          <div style="display:flex;gap:8px">
+            <button id="cwp-save-btn" style="padding:8px 20px;border:none;border-radius:8px;background:linear-gradient(90deg,#00c853,#009944);color:#fff;cursor:pointer;font-weight:600;font-size:0.88rem">Save Card</button>
+            <button id="cwp-cancel-add" style="padding:8px 16px;border:1px solid rgba(255,255,255,0.2);border-radius:8px;background:transparent;color:inherit;cursor:pointer;font-size:0.88rem">Cancel</button>
+          </div>
+        </div>
+
+        ${cards.length === 0
+          ? `<p style="opacity:0.55;font-size:0.9rem">No payment cards saved yet.</p>`
+          : `<div style="display:grid;gap:10px">${cards.map(c => `
+              <div class="cwp-card-row" style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px;border-radius:10px;background:rgba(255,255,255,0.04);border:1px solid ${c.isDefault ? "rgba(8,165,226,0.5)" : "rgba(255,255,255,0.08)"}">
+                <div>
+                  <div style="font-weight:700;font-size:0.95rem">${cardBrand(c.cardNumber)} •••• ${c.last4 || (c.cardNumber || "").slice(-4)}</div>
+                  <div style="font-size:0.78rem;opacity:0.6;margin-top:2px">${c.cardHolder} · Expires ${c.expiry}${c.isDefault ? ' <span style="color:#0887e2;font-weight:700">· DEFAULT</span>' : ""}</div>
+                </div>
+                <div style="display:flex;gap:6px;flex-shrink:0">
+                  ${!c.isDefault ? `<button class="cwp-default-btn" data-id="${c.id}" style="padding:5px 12px;border:1px solid rgba(8,165,226,0.4);border-radius:6px;background:transparent;color:#0887e2;cursor:pointer;font-size:0.75rem">Set Default</button>` : ""}
+                  <button class="cwp-remove-btn" data-id="${c.id}" style="padding:5px 12px;border:1px solid rgba(255,0,51,0.4);border-radius:6px;background:transparent;color:#ff5577;cursor:pointer;font-size:0.75rem">Remove</button>
+                </div>
+              </div>`).join("")}
+            </div>`
+        }
+      </div>
+    `;
+
+    document.getElementById("cwp-add-toggle").addEventListener("click", () => {
+      const form = document.getElementById("cwp-add-form");
+      form.style.display = form.style.display === "none" ? "block" : "none";
+    });
+    document.getElementById("cwp-cancel-add").addEventListener("click", () => {
+      document.getElementById("cwp-add-form").style.display = "none";
+    });
+
+    const numEl = document.getElementById("cwp-num");
+    numEl.addEventListener("input", () => {
+      let v = numEl.value.replace(/\D/g, "").slice(0, 16);
+      numEl.value = v.replace(/(.{4})/g, "$1 ").trim();
+    });
+    const expEl = document.getElementById("cwp-exp");
+    expEl.addEventListener("input", () => {
+      let v = expEl.value.replace(/\D/g, "").slice(0, 4);
+      if (v.length >= 3) v = v.slice(0, 2) + "/" + v.slice(2);
+      expEl.value = v;
+    });
+
+    document.getElementById("cwp-save-btn").addEventListener("click", async () => {
+      const holder = document.getElementById("cwp-holder").value.trim();
+      const raw    = document.getElementById("cwp-num").value.replace(/\s+/g, "");
+      const exp    = document.getElementById("cwp-exp").value.trim();
+      const cvc    = document.getElementById("cwp-cvc").value.trim();
+      if (!holder || raw.length < 12 || !/^(0[1-9]|1[0-2])\/\d{2}$/.test(exp) || !/^\d{3,4}$/.test(cvc)) {
+        showToast("Please fill in valid card details.", "error"); return;
+      }
+      const saveBtn = document.getElementById("cwp-save-btn");
+      saveBtn.disabled = true; saveBtn.textContent = "Saving…";
+      try {
+        const makeDefault = document.getElementById("cwp-set-default").checked || cards.length === 0;
+        const newId = await savePaymentCard(uid, { cardHolder: holder, cardNumber: raw, last4: raw.slice(-4), expiry: exp, isDefault: makeDefault });
+        if (makeDefault) await setDefaultCard(uid, newId);
+        showToast("Card saved!", "success");
+        render();
+      } catch (e) {
+        showToast(e.message, "error");
+        saveBtn.disabled = false; saveBtn.textContent = "Save Card";
+      }
+    });
+
+    container.querySelectorAll(".cwp-remove-btn").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        btn.disabled = true;
+        try {
+          await removePaymentCard(uid, btn.dataset.id);
+          showToast("Card removed.", "info");
+          render();
+        } catch (e) { showToast(e.message, "error"); btn.disabled = false; }
+      });
+    });
+    container.querySelectorAll(".cwp-default-btn").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        btn.disabled = true;
+        try {
+          await setDefaultCard(uid, btn.dataset.id);
+          showToast("Default card updated.", "success");
+          render();
+        } catch (e) { showToast(e.message, "error"); btn.disabled = false; }
+      });
+    });
+  }
+
+  render();
+}
+
+function _loadSettingsPanel(uid) {
+  const panel = document.getElementById("panel-settings");
+  if (!panel) return;
+  panel.innerHTML = `
+    <h2 style="color:#0887e2">Settings</h2>
+    <p style="opacity:0.65;margin-bottom:20px">Manage your payment methods and account preferences.</p>
+    <div id="settings-cards-container"></div>
+  `;
+  _loadCardWalletPanel(uid, document.getElementById("settings-cards-container"));
+}
+
+// --------------------------------------------------------
 // Client Booking Panel — card grid with day filters & capacity bars
 // --------------------------------------------------------
-async function _loadClientBookingPanel(clientId, clientName) {
+async function _loadClientBookingPanel(clientId, clientName, opts = {}) {
   const panel = document.getElementById("panel-booking");
   if (!panel) return;
 
-  panel.innerHTML = `
-    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:6px">
-      <h2 style="color:#0887e2;margin:0">Book Classes</h2>
-      <input id="cb-search" type="text" placeholder="🔍  Search classes…"
-        style="padding:9px 16px;border-radius:20px;border:1px solid rgba(8,165,226,0.25);
-        background:rgba(8,165,226,0.06);color:inherit;font-family:inherit;font-size:0.88rem;width:210px">
-    </div>
-    <div style="text-align:center;padding:40px;opacity:0.5">Loading schedule…</div>`;
+  // In silent mode (called after booking/cancel) we do NOT blank the panel —
+  // we let the existing content sit while we fetch, then swap in fresh content.
+  if (!opts.silent) {
+    panel.innerHTML = `<div style="text-align:center;padding:40px;opacity:0.5">Loading schedule…</div>`;
+  }
 
   const DAYS = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
-  let classes, bookings;
+  const CLASS_TYPES = ["All Types","General","Strength","Cardio","HIIT","Yoga","Pilates","Boxing","Cycling","Stretching","CrossFit"];
+  const TYPE_COLORS = {
+    "Strength":"#e96d25","Cardio":"#ff0033","HIIT":"#ff6b00","Yoga":"#7c4dff",
+    "Pilates":"#e91e63","Boxing":"#f44336","Cycling":"#0887e2","Stretching":"#00bcd4",
+    "CrossFit":"#ff5722","General":"#00c853"
+  };
+
+  let classes, linkedTrainerIds;
   try {
-    [classes, bookings] = await Promise.all([getClasses(), getClientBookings(clientId)]);
-  } catch (e) {
-    panel.innerHTML += `<p style="color:#ff0033">${e.message}</p>`;
+    [classes, linkedTrainerIds] = await Promise.all([
+      getClasses(), getClientLinkedTrainerIds(clientId)
+    ]);
+  } catch(e) {
+    panel.innerHTML = `<h2 style="color:#0887e2">Book Classes</h2><p style="color:#ff0033">${e.message}</p>`;
     return;
   }
 
+  if (!Array.isArray(classes)) classes = [];
+  if (!Array.isArray(linkedTrainerIds)) linkedTrainerIds = [];
+
+  const linkedSet = new Set(linkedTrainerIds);
+
+  // Build bookings by reading each class's participant entry for this client.
+  const bookings = (await Promise.all(
+    classes.map(async c => {
+      const snap = await db.ref("classes/" + c.id + "/participants/" + clientId).once("value").catch(() => null);
+      if (!snap || !snap.exists()) return null;
+      const data = snap.val() || {};
+      return { id: data.bookingId || ("_" + c.id), classId: c.id, className: c.name, day: c.day, time: c.time, trainerName: c.trainerName };
+    })
+  )).filter(Boolean);
   const bookedClassIds = new Set(bookings.map(b => b.classId));
-  const counts = {};
-  for (const c of classes) counts[c.id] = await getClassBookingCount(c.id);
 
-  const activeDays = DAYS.filter(d => classes.some(c => c.day === d));
+  // Resolve hired trainer names so we can still show a useful section
+  // even when those trainers have not created classes yet.
+  const linkedTrainerProfiles = await Promise.all(
+    linkedTrainerIds.map(async tid => {
+      const snap = await db.ref("users/" + tid).once("value").catch(() => null);
+      return snap && snap.exists() ? { id: tid, ...(snap.val() || {}) } : { id: tid, name: "Trainer" };
+    })
+  );
+  const normalizeTrainerName = (v) => String(v || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const linkedNames = linkedTrainerProfiles
+    .map(t => normalizeTrainerName(t && t.name))
+    .filter(Boolean);
+  const linkedNameSet = new Set(linkedNames);
+  function nameMatchesLinked(nameValue) {
+    const n = normalizeTrainerName(nameValue);
+    if (!n) return false;
+    if (linkedNameSet.has(n)) return true;
+    return linkedNames.some(ln => ln && (ln.includes(n) || n.includes(ln)));
+  }
 
-  function buildCards(filterDay, filterText) {
+  // Build a trainerId -> normalized trainer name map from users,
+  // so classes still match even if class.trainerName is empty/stale.
+  const classTrainerIds = [...new Set(classes.map(c => c && c.trainerId).filter(Boolean))];
+  const classTrainerNameMap = {};
+  await Promise.all(classTrainerIds.map(async tid => {
+    const snap = await db.ref("users/" + tid).once("value").catch(() => null);
+    const name = snap && snap.exists() ? (snap.val() || {}).name : "";
+    classTrainerNameMap[tid] = normalizeTrainerName(name);
+  }));
+
+  function isLinkedTrainerClass(c) {
+    const byId = linkedSet.has(c.trainerId);
+    const byClassName = nameMatchesLinked(c.trainerName);
+    const byResolvedUserName = nameMatchesLinked(classTrainerNameMap[c.trainerId] || "");
+    return byId || byClassName || byResolvedUserName;
+  }
+
+  // Fetch all booking counts in parallel
+  const countEntries = await Promise.all(
+    classes.map(c => getClassBookingCount(c.id).then(n => [c.id, n]))
+  );
+  const counts = Object.fromEntries(countEntries);
+
+  // Pre-load waitlist position for all classes
+  const waitlistPositions = {}; // classId -> position (1-based) or 0 if not on waitlist
+  await Promise.all(classes.map(async c => {
+    try {
+      const wl = await getWaitlist(c.id);
+      const idx = wl.findIndex(w => w.clientId === clientId);
+      waitlistPositions[c.id] = idx >= 0 ? idx + 1 : 0;
+    } catch(_) { waitlistPositions[c.id] = 0; }
+  }));
+
+  // Fetch trainer classes DIRECTLY from Firebase by trainerId — most reliable approach.
+  // This bypasses all ID-matching logic and guarantees we get the trainer's actual classes.
+  let trainerClasses = [];
+  if (linkedTrainerIds.length) {
+    const perTrainer = await Promise.all(
+      linkedTrainerIds.map(tid => getTrainerClasses(tid).catch(() => []))
+    );
+    const seenIds = new Set();
+    for (const arr of perTrainer) {
+      for (const c of arr) {
+        if (c && c.id && !seenIds.has(c.id)) {
+          seenIds.add(c.id);
+          trainerClasses.push(c);
+        }
+      }
+    }
+    trainerClasses.sort((a, b) => {
+      const di = DAYS.indexOf(a.day) - DAYS.indexOf(b.day);
+      return di !== 0 ? di : (a.time || "").localeCompare(b.time || "");
+    });
+
+    // Trainer classes are NOT returned by getClasses() so their participant entries
+    // were never checked in the bookings array above. Fix that now.
+    const tcBookings = (await Promise.all(
+      trainerClasses.filter(c => !classes.some(gc => gc.id === c.id)).map(async c => {
+        try {
+          const snap = await db.ref("classes/" + c.id + "/participants/" + clientId).once("value");
+          if (!snap || !snap.exists()) return null;
+          const data = snap.val() || {};
+          return { id: data.bookingId || ("_" + c.id), classId: c.id, className: c.name, day: c.day, time: c.time, trainerName: c.trainerName };
+        } catch(_) { return null; }
+      })
+    )).filter(Boolean);
+    for (const b of tcBookings) {
+      bookings.push(b);
+      bookedClassIds.add(b.classId);
+    }
+    // Also count trainer classes
+    await Promise.all(
+      trainerClasses.filter(c => !counts[c.id]).map(async c => {
+        counts[c.id] = await getClassBookingCount(c.id).catch(() => 0);
+      })
+    );
+  }
+  // Build a set of trainer class IDs so isVisible can use it without ID-matching guesswork
+  const trainerClassIds = new Set(trainerClasses.map(c => c.id));
+
+  const visibleClasses = classes.filter(c => {
+    if (trainerClassIds.has(c.id)) return true;       // linked trainer's class — always show
+    if (isLinkedTrainerClass(c)) return true;          // backup: ID/name match
+    if (!c.source || c.source === "admin") return true; // global/admin class
+    return false;                                       // trainer-private, not linked
+  });
+  const activeDays = DAYS.filter(d => visibleClasses.some(c => c.day === d));
+
+  function classCard(c, isTrainerClass) {
+    const booked = counts[c.id] || 0;
+    const cap = c.capacity || 20;
+    const pct = Math.min((booked / cap) * 100, 100);
+    const full = pct >= 100;
+    const isBooked = bookedClassIds.has(c.id);
+    const barColor = pct >= 90 ? "#ff0033" : pct >= 60 ? "#e96d25" : "#00c853";
+    const typeColor = TYPE_COLORS[c.type] || "#00c853";
+    const bookingId = isBooked ? ((bookings.find(b => b.classId === c.id) || {}).id || "") : "";
+    const badge = isBooked
+      ? `<span style="background:rgba(8,135,226,0.15);color:#0887e2;padding:2px 9px;border-radius:10px;font-size:0.7rem;font-weight:700">✓ BOOKED</span>`
+      : full
+        ? `<span style="background:rgba(255,0,51,0.12);color:#ff0033;padding:2px 9px;border-radius:10px;font-size:0.7rem;font-weight:700">FULL</span>`
+        : `<span style="background:rgba(0,200,80,0.1);color:#00c853;padding:2px 9px;border-radius:10px;font-size:0.7rem;font-weight:700">${cap - booked} open</span>`;
+    const btnGrad = isTrainerClass ? "135deg,#7c4dff,#4c00d9" : "90deg,#0887e2,#006af5";
+    const waitlistPos = waitlistPositions[c.id] || 0;
+    const action = isBooked
+      ? `<button class="cb-cancel-class-btn" data-id="${bookingId}"
+          style="padding:7px;border:1px solid rgba(255,0,51,0.35);border-radius:6px;background:transparent;
+          color:#ff0033;cursor:pointer;font-size:0.8rem;font-weight:600;width:100%;transition:0.2s">Cancel Booking</button>`
+      : full && waitlistPos > 0
+        ? `<button disabled style="padding:7px;border:none;border-radius:6px;background:rgba(233,109,37,0.12);
+            color:#e96d25;font-size:0.8rem;width:100%;cursor:not-allowed">⏳ Waitlist Position #${waitlistPos}</button>`
+      : full
+        ? `<button class="cb-join-waitlist-btn" data-id="${c.id}" data-name="${c.name}"
+            style="padding:7px;border:1px solid rgba(233,109,37,0.4);border-radius:6px;background:transparent;
+            color:#e96d25;cursor:pointer;font-size:0.8rem;font-weight:600;width:100%;transition:0.2s">⏳ Join Waitlist</button>`
+        : `<button class="cb-book-btn" data-id="${c.id}"
+            style="padding:7px;border:none;border-radius:6px;background:linear-gradient(${btnGrad});
+            color:#fff;cursor:pointer;font-size:0.8rem;font-weight:600;width:100%;transition:0.2s">Book Now</button>`;
+    const trainerBorder = isTrainerClass ? "border:1px solid rgba(124,77,255,0.25);" : "";
+    const trainerBadge = isTrainerClass
+      ? `<div style="display:inline-flex;align-items:center;gap:5px;background:rgba(124,77,255,0.12);
+          border:1px solid rgba(124,77,255,0.3);border-radius:6px;padding:3px 9px;font-size:0.75rem;
+          color:#b39ddb;font-weight:600;margin-bottom:6px">
+          ★ ${c.trainerName || "Trainer"}
+        </div>`
+      : `<div style="font-size:0.78rem;opacity:0.7;margin-bottom:4px">
+          👤 <span style="color:#0887e2;font-weight:600">${c.trainerName || "TBA"}</span>
+        </div>`;
+    return `
+      <div class="card" style="display:flex;flex-direction:column;gap:10px;padding:16px;cursor:default;
+        border-top:3px solid ${typeColor};${trainerBorder}">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+          <div>
+            ${trainerBadge}
+            <strong style="font-size:0.95rem;display:block;margin-bottom:4px">${c.name}</strong>
+            <span style="background:${typeColor}22;color:${typeColor};padding:1px 7px;border-radius:5px;font-size:0.68rem;font-weight:600">${c.type || "General"}</span>
+          </div>
+          ${badge}
+        </div>
+        <div style="font-size:0.82rem;opacity:0.65;display:flex;flex-direction:column;gap:3px">
+          <span>🕐 ${c.time}${c.duration ? " · " + c.duration + " min" : ""}
+            ${c.day ? ` &nbsp;·&nbsp; 📅 ${c.day}` : ""}</span>
+          ${c.location ? "<span>📍 " + c.location + "</span>" : ""}
+        </div>
+        <div>
+          <div style="display:flex;justify-content:space-between;font-size:0.75rem;opacity:0.5;margin-bottom:4px">
+            <span>Capacity</span><span>${booked}/${cap}</span>
+          </div>
+          <div style="background:rgba(255,255,255,0.1);border-radius:4px;height:5px;overflow:hidden">
+            <div style="width:${pct}%;height:100%;background:${barColor};border-radius:4px;transition:width 0.5s"></div>
+          </div>
+        </div>
+        ${action}
+      </div>`;
+  }
+
+  function buildCards(filterDay, filterText, filterType) {
     const days = filterDay === "All" ? activeDays : (activeDays.includes(filterDay) ? [filterDay] : []);
     let html = "";
     for (const day of days) {
-      let dayClasses = classes.filter(c => c.day === day);
+      let dayClasses = visibleClasses.filter(c => c.day === day);
       if (filterText) {
         const q = filterText.toLowerCase();
         dayClasses = dayClasses.filter(c =>
-          c.name.toLowerCase().includes(q) || (c.trainerName || "").toLowerCase().includes(q));
+          c.name.toLowerCase().includes(q) || (c.trainerName || "").toLowerCase().includes(q) ||
+          (c.type || "").toLowerCase().includes(q));
       }
+      if (filterType && filterType !== "All Types") dayClasses = dayClasses.filter(c => c.type === filterType);
       if (!dayClasses.length) continue;
-      html += `<h3 style="font-family:Orbitron,sans-serif;font-size:0.78rem;letter-spacing:2px;
-        color:#0887e2;margin:20px 0 10px;text-transform:uppercase;padding-bottom:6px;
-        border-bottom:1px solid rgba(8,165,226,0.15)">${day}</h3>
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;margin-bottom:6px">`;
-      for (const c of dayClasses) {
-        const booked = counts[c.id] || 0;
-        const cap = c.capacity || 20;
-        const pct = Math.min((booked / cap) * 100, 100);
-        const full = pct >= 100;
-        const isBooked = bookedClassIds.has(c.id);
-        const barColor = pct >= 90 ? "#ff0033" : pct >= 60 ? "#e96d25" : "#00c853";
-        const bookingId = isBooked ? (bookings.find(b => b.classId === c.id)?.id || "") : "";
-        const badge = isBooked
-          ? `<span style="background:rgba(8,135,226,0.15);color:#0887e2;padding:3px 10px;border-radius:12px;font-size:0.72rem;font-weight:700;white-space:nowrap">✓ Booked</span>`
-          : full
-            ? `<span style="background:rgba(255,0,51,0.12);color:#ff0033;padding:3px 10px;border-radius:12px;font-size:0.72rem;font-weight:700">Full</span>`
-            : `<span style="background:rgba(0,200,80,0.1);color:#00c853;padding:3px 10px;border-radius:12px;font-size:0.72rem;font-weight:700;white-space:nowrap">${cap - booked} open</span>`;
-        const action = isBooked
-          ? `<button class="cb-cancel-class-btn" data-id="${bookingId}"
-              style="padding:7px;border:1px solid rgba(255,0,51,0.35);border-radius:6px;background:transparent;
-              color:#ff0033;cursor:pointer;font-size:0.8rem;font-weight:600;width:100%;transition:0.2s">Cancel Booking</button>`
-          : full
-            ? `<button disabled style="padding:7px;border:none;border-radius:6px;background:rgba(255,255,255,0.06);
-                color:rgba(255,255,255,0.25);font-size:0.8rem;width:100%;cursor:not-allowed">Class Full</button>`
-            : `<button class="cb-book-btn" data-id="${c.id}"
-                style="padding:7px;border:none;border-radius:6px;
-                background:linear-gradient(90deg,#0887e2,#006af5);color:#fff;cursor:pointer;
-                font-size:0.8rem;font-weight:600;width:100%;transition:0.2s">Book Now</button>`;
-        html += `
-          <div class="card" style="display:flex;flex-direction:column;gap:10px;padding:16px;cursor:default">
-            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
-              <strong style="font-size:0.97rem;line-height:1.3">${c.name}</strong>
-              ${badge}
-            </div>
-            <div style="font-size:0.83rem;opacity:0.65;display:flex;gap:14px;flex-wrap:wrap">
-              <span>🕐 ${c.time}</span>
-              <span>👤 ${c.trainerName || "TBA"}</span>
-            </div>
-            <div>
-              <div style="display:flex;justify-content:space-between;font-size:0.75rem;opacity:0.55;margin-bottom:4px">
-                <span>Capacity</span><span>${booked}/${cap}</span>
-              </div>
-              <div style="background:rgba(255,255,255,0.1);border-radius:4px;height:5px;overflow:hidden">
-                <div style="width:${pct}%;height:100%;background:${barColor};border-radius:4px;transition:width 0.5s"></div>
-              </div>
-            </div>
-            ${action}
-          </div>`;
-      }
-      html += `</div>`;
+      html += `<div style="margin-bottom:24px">
+        <h3 style="font-family:Orbitron,sans-serif;font-size:0.78rem;letter-spacing:2px;color:#0887e2;
+          margin:0 0 12px;text-transform:uppercase;padding-bottom:6px;border-bottom:1px solid rgba(8,165,226,0.15)">${day}</h3>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px">
+          ${dayClasses.map(c => classCard(c, isLinkedTrainerClass(c))).join("")}
+        </div></div>`;
     }
-    if (!html) html = `<div class="card" style="text-align:center;padding:40px;opacity:0.5">
-      No classes found${filterText ? ` matching "${filterText}"` : ""}.</div>`;
+    if (!html) html = `<div class="card" style="text-align:center;padding:40px;opacity:0.5">No classes found.</div>`;
     return html;
   }
 
-  let myBookingsHtml = "";
-  if (bookings.length) {
-    for (const b of bookings) {
-      myBookingsHtml += `
-        <div style="display:flex;justify-content:space-between;align-items:center;
-          padding:12px 16px;border-radius:10px;border:1px solid rgba(8,165,226,0.12);
-          background:rgba(8,165,226,0.04);margin-bottom:10px;gap:12px">
-          <div>
-            <strong style="font-size:0.92rem">${b.className || "Class"}</strong>
-            <div style="font-size:0.8rem;opacity:0.6;margin-top:3px">
-              📅 ${b.day || "—"} &nbsp;·&nbsp; 🕐 ${b.time || "—"} &nbsp;·&nbsp;
-              👤 <span style="color:#0887e2">${b.trainerName || "—"}</span>
-            </div>
-          </div>
-          <button class="cb-cancel-btn" data-id="${b.id}"
-            style="flex-shrink:0;padding:6px 14px;border:1px solid rgba(255,0,51,0.35);border-radius:6px;
-            background:transparent;color:#ff0033;cursor:pointer;font-size:0.78rem;font-weight:600;transition:0.2s">
-            Cancel
-          </button>
-        </div>`;
-    }
-  } else {
-    myBookingsHtml = `<p style="opacity:0.5;text-align:center;padding:20px">You haven't booked any classes yet.</p>`;
-  }
+  const trainerNames = linkedTrainerProfiles
+    .map(t => (t && t.name ? t.name : "Trainer"))
+    .filter(Boolean);
+
+  const trainerSectionHtml = linkedTrainerIds.length ? `
+    <div style="margin-bottom:28px" id="cb-trainer-section">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+        <div style="width:4px;height:24px;background:linear-gradient(180deg,#7c4dff,#0887e2);border-radius:2px"></div>
+        <h3 style="margin:0;font-size:0.95rem;color:#b39ddb">
+          ★ Your Trainer's Classes
+          <span style="font-size:0.78rem;font-weight:400;opacity:0.6;margin-left:8px">— Recommended for you</span>
+        </h3>
+      </div>
+      <div id="cb-trainer-cards" style="${trainerClasses.length ? "display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px" : ""}">
+        ${trainerClasses.length ? trainerClasses.map(c => classCard(c, true)).join("") : `
+        <div class="card" style="padding:18px;border:1px dashed rgba(124,77,255,0.4)">
+          <strong style="display:block;margin-bottom:6px;color:#d1c4e9">No classes from your hired trainers yet</strong>
+          <p style="opacity:0.72;margin:0;font-size:0.84rem">
+            Hired trainers: ${trainerNames.length ? trainerNames.join(", ") : "Trainer"}. Ask them to publish classes and they will appear here.
+          </p>
+        </div>`}
+      </div>
+    </div>` : "";
 
   const dayPills = ["All", ...activeDays].map(d =>
     `<button class="cb-day-pill" data-day="${d}"
-      style="padding:6px 16px;border-radius:20px;border:1px solid rgba(8,165,226,${d === "All" ? "0.5" : "0.2"});
+      style="padding:5px 14px;border-radius:16px;border:1px solid rgba(8,165,226,${d === "All" ? "0.5" : "0.2"});
       background:${d === "All" ? "rgba(8,135,226,0.15)" : "transparent"};color:inherit;cursor:pointer;
-      font-family:inherit;font-size:0.8rem;transition:0.2s;white-space:nowrap">${d}</button>`
+      font-family:inherit;font-size:0.78rem;transition:0.2s;white-space:nowrap">${d}</button>`
   ).join("");
 
+  const typePills = CLASS_TYPES.map(t =>
+    `<button class="cb-type-pill" data-type="${t}"
+      style="padding:5px 14px;border-radius:16px;border:1px solid rgba(255,255,255,${t === "All Types" ? "0.25" : "0.1"});
+      background:${t === "All Types" ? "rgba(255,255,255,0.08)" : "transparent"};color:inherit;cursor:pointer;
+      font-family:inherit;font-size:0.78rem;transition:0.2s;white-space:nowrap">${t}</button>`
+  ).join("");
+
+  function renderMyBookings() {
+    return bookings.length
+      ? bookings.map(b => `
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;
+            border-radius:10px;border:1px solid rgba(8,165,226,0.12);background:rgba(8,165,226,0.04);margin-bottom:10px;gap:12px">
+            <div>
+              <strong style="font-size:0.92rem">${b.className || "Class"}</strong>
+              <div style="font-size:0.8rem;opacity:0.6;margin-top:3px">
+                📅 ${b.day || "—"} &nbsp;·&nbsp; 🕐 ${b.time || "—"} &nbsp;·&nbsp;
+                👤 <span style="color:#0887e2">${b.trainerName || "—"}</span>
+              </div>
+            </div>
+            <button class="cb-cancel-btn" data-id="${b.id}"
+              style="flex-shrink:0;padding:6px 14px;border:1px solid rgba(255,0,51,0.35);border-radius:6px;
+              background:transparent;color:#ff0033;cursor:pointer;font-size:0.78rem;font-weight:600;transition:0.2s">Cancel</button>
+          </div>`).join("")
+      : `<p style="opacity:0.5;text-align:center;padding:20px">You haven't booked any classes yet.</p>`;
+  }
+
   panel.innerHTML = `
-    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:18px">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:20px">
       <h2 style="color:#0887e2;margin:0">Book Classes</h2>
-      <input id="cb-search" type="text" placeholder="🔍  Search classes…"
+      <input id="cb-search" type="text" placeholder="🔍 Search classes, trainers…"
         style="padding:9px 16px;border-radius:20px;border:1px solid rgba(8,165,226,0.25);
-        background:rgba(8,165,226,0.06);color:inherit;font-family:inherit;font-size:0.88rem;width:210px">
+        background:rgba(8,165,226,0.06);color:inherit;font-family:inherit;font-size:0.88rem;width:220px">
     </div>
-    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:22px">${dayPills}</div>
-    <div class="card" style="margin-bottom:24px;padding:20px">
-      <div id="cb-schedule">${buildCards("All", "")}</div>
+
+    ${trainerSectionHtml}
+
+    <div style="margin-bottom:14px">
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">${dayPills}</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px">${typePills}</div>
     </div>
+
+    <div class="card" style="padding:20px;margin-bottom:24px">
+      <div id="cb-schedule">${buildCards("All", "", "All Types")}</div>
+    </div>
+
     <div class="card" style="padding:20px">
-      <h3 style="margin-bottom:16px">My Bookings <span style="font-size:0.8rem;font-weight:400;opacity:0.55;font-family:'Exo 2',sans-serif">(${bookings.length})</span></h3>
-      <div id="cb-my-bookings">${myBookingsHtml}</div>
+      <h3 style="margin:0 0 16px">My Bookings
+        <span id="cb-bookings-count" style="font-size:0.8rem;font-weight:400;opacity:0.55;font-family:'Exo 2',sans-serif">(${bookings.length})</span>
+      </h3>
+      <div id="cb-my-bookings">${renderMyBookings()}</div>
     </div>`;
 
-  let activeDay = "All";
-  let activeSearch = "";
+  let activeDay = "All", activeSearch = "", activeType = "All Types";
+
+  function refresh() {
+    document.getElementById("cb-schedule").innerHTML = buildCards(activeDay, activeSearch, activeType);
+    // Also re-render the trainer cards section so booked state updates there too
+    const trainerCardsEl = document.getElementById("cb-trainer-cards");
+    if (trainerCardsEl && trainerClasses.length) {
+      trainerCardsEl.innerHTML = trainerClasses.map(c => classCard(c, true)).join("");
+    }
+    bindButtons();
+  }
 
   function bindButtons() {
+    // Define cancelHandler first — referenced by both cancel button types and syncMyBookingsUI
+    function cancelHandler(btn) {
+      btn.addEventListener("click", () => {
+        showModal("Cancel Booking", "<p>Cancel this booking?</p>", async () => {
+          try {
+            await cancelBooking(btn.dataset.id);
+            showToast("Booking cancelled.", "success");
+            await _loadClientBookingPanel(clientId, clientName, { silent: true });
+          } catch(e) { showToast(e.message, "error"); }
+        });
+      });
+    }
+
     panel.querySelectorAll(".cb-book-btn").forEach(btn => {
       btn.addEventListener("click", async () => {
+        const classId = btn.dataset.id;
         btn.disabled = true; btn.textContent = "Booking…";
         try {
-          await bookClass(btn.dataset.id, clientId, clientName);
-          showToast("Class booked!", "success");
-          _loadClientBookingPanel(clientId, clientName);
-        } catch (e) {
+          await bookClass(classId, clientId, clientName);
+          showToast("Class booked! 🎉", "success");
+          await _loadClientBookingPanel(clientId, clientName, { silent: true });
+        } catch(e) { showToast(e.message, "error"); btn.disabled = false; btn.textContent = "Book Now"; }
+      });
+    });
+
+    panel.querySelectorAll(".cb-join-waitlist-btn").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const classId = btn.dataset.id, className = btn.dataset.name;
+        btn.disabled = true; btn.textContent = "Joining…";
+        try {
+          await addToWaitlist(classId, clientId, clientName);
+          showToast(`Added to waitlist for ${className}.`, "success");
+          await _loadClientBookingPanel(clientId, clientName, { silent: true });
+        } catch(e) {
           showToast(e.message, "error");
-          btn.disabled = false; btn.textContent = "Book Now";
+          btn.disabled = false; btn.textContent = "⏳ Join Waitlist";
         }
       });
     });
-    const cancelHandler = btn => btn.addEventListener("click", () => {
-      showModal("Cancel Booking", "<p>Cancel this booking?</p>", async () => {
-        try {
-          await cancelBooking(btn.dataset.id);
-          showToast("Booking cancelled.", "success");
-          _loadClientBookingPanel(clientId, clientName);
-        } catch (e) { showToast(e.message, "error"); }
-      });
-    });
+
     panel.querySelectorAll(".cb-cancel-btn").forEach(cancelHandler);
     panel.querySelectorAll(".cb-cancel-class-btn").forEach(cancelHandler);
   }
@@ -2913,19 +3996,30 @@ async function _loadClientBookingPanel(clientId, clientName) {
         p.style.background = on ? "rgba(8,135,226,0.15)" : "transparent";
         p.style.borderColor = on ? "rgba(8,165,226,0.5)" : "rgba(8,165,226,0.2)";
       });
-      document.getElementById("cb-schedule").innerHTML = buildCards(activeDay, activeSearch);
-      bindButtons();
+      refresh();
+    });
+  });
+
+  panel.querySelectorAll(".cb-type-pill").forEach(pill => {
+    pill.addEventListener("click", () => {
+      activeType = pill.dataset.type;
+      panel.querySelectorAll(".cb-type-pill").forEach(p => {
+        const on = p.dataset.type === activeType;
+        p.style.background = on ? "rgba(255,255,255,0.08)" : "transparent";
+        p.style.borderColor = on ? "rgba(255,255,255,0.25)" : "rgba(255,255,255,0.1)";
+      });
+      refresh();
     });
   });
 
   document.getElementById("cb-search").addEventListener("input", e => {
     activeSearch = e.target.value.trim().toLowerCase();
-    document.getElementById("cb-schedule").innerHTML = buildCards(activeDay, activeSearch);
-    bindButtons();
+    refresh();
   });
 
   bindButtons();
 }
+
 
 function _loadClientPickTrainerPlaceholder() {
   // Replaced by full _loadPickTrainerPanel() — see below
@@ -3013,7 +4107,7 @@ async function _loadPickTrainerPanel(clientId) {
     <!-- Trainer Detail Modal (hidden) -->
     <div id="pt-modal-overlay" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;
           background:${ui.overlayBg};backdrop-filter:blur(6px);z-index:9000;
-         display:none;align-items:center;justify-content:center">
+          align-items:center;justify-content:center">
        <div id="pt-modal" style="background:${ui.modalBg};border:1px solid ${ui.modalBorder};
            border-radius:16px;padding:36px;max-width:560px;width:90%;max-height:85vh;overflow-y:auto;
          box-shadow:${ui.modalShadow}">
@@ -3462,8 +4556,8 @@ async function _loadPickTrainerPanel(clientId) {
     // Filter by specialty
     if (specFilter !== "all") {
       filtered = filtered.filter(t =>
-        t.specialties.some(s => s.toLowerCase().includes(specFilter.toLowerCase())) ||
-        t.specialty.toLowerCase().includes(specFilter.toLowerCase())
+        (t.specialties || []).some(s => String(s || "").toLowerCase().includes(specFilter.toLowerCase())) ||
+        String(t.specialty || "").toLowerCase().includes(specFilter.toLowerCase())
       );
     }
 
@@ -3501,129 +4595,373 @@ async function _loadTrainerClassesPanel(trainerUid, trainerName) {
   if (!panel) return;
 
   const DAYS = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
-  const dayOpts = DAYS.map(d => `<option value="${d}">${d}</option>`).join("");
+  const CLASS_TYPES = ["General","Strength","Cardio","HIIT","Yoga","Pilates","Boxing","Cycling","Stretching","CrossFit"];
+  const TYPE_COLORS = {
+    "Strength":"#e96d25","Cardio":"#ff0033","HIIT":"#ff6b00","Yoga":"#7c4dff",
+    "Pilates":"#e91e63","Boxing":"#f44336","Cycling":"#0887e2","Stretching":"#00bcd4",
+    "CrossFit":"#ff5722","General":"#00c853"
+  };
 
+  panel.innerHTML = `<div style="text-align:center;padding:40px;opacity:0.5">Loading classes…</div>`;
   const classes = await getTrainerClasses(trainerUid);
   const counts = {};
   for (const c of classes) counts[c.id] = await getClassBookingCount(c.id);
 
   const totalBooked = Object.values(counts).reduce((s, n) => s + n, 0);
   const totalCap    = classes.reduce((s, c) => s + (c.capacity || 20), 0);
+  const fillRate    = totalCap > 0 ? Math.round((totalBooked / totalCap) * 100) : 0;
 
-  const statsHtml = `
-    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:24px">
-      <div class="card" style="text-align:center;padding:16px;cursor:default">
-        <div style="font-size:1.8rem;font-weight:700;color:#0887e2">${classes.length}</div>
-        <div style="font-size:0.78rem;opacity:0.6;margin-top:2px">Classes</div>
-      </div>
-      <div class="card" style="text-align:center;padding:16px;cursor:default">
-        <div style="font-size:1.8rem;font-weight:700;color:#e96d25">${totalBooked}</div>
-        <div style="font-size:0.78rem;opacity:0.6;margin-top:2px">Total Bookings</div>
-      </div>
-      <div class="card" style="text-align:center;padding:16px;cursor:default">
-        <div style="font-size:1.8rem;font-weight:700;color:#00c853">${totalCap - totalBooked}</div>
-        <div style="font-size:0.78rem;opacity:0.6;margin-top:2px">Open Spots</div>
-      </div>
-    </div>`;
+  const typeOpts = CLASS_TYPES.map(t => `<option value="${t}">${t}</option>`).join("");
+  const dayOpts  = DAYS.map(d => `<option value="${d}">${d}</option>`).join("");
 
-  let classCards = "";
-  for (const day of DAYS) {
-    const dayClasses = classes.filter(c => c.day === day);
-    if (!dayClasses.length) continue;
-    classCards += `<h3 style="font-family:Orbitron,sans-serif;font-size:0.78rem;letter-spacing:2px;
-      color:#0887e2;margin:20px 0 10px;text-transform:uppercase;padding-bottom:6px;
-      border-bottom:1px solid rgba(8,165,226,0.15)">${day}</h3>
-      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;margin-bottom:6px">`;
-    for (const c of dayClasses) {
-      const booked = counts[c.id] || 0;
-      const cap = c.capacity || 20;
-      const pct = Math.min((booked / cap) * 100, 100);
-      const full = pct >= 100;
-      const barColor = pct >= 90 ? "#ff0033" : pct >= 60 ? "#e96d25" : "#00c853";
-      classCards += `
-        <div class="card" style="display:flex;flex-direction:column;gap:10px;padding:16px;cursor:default">
-          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
-            <strong style="font-size:0.97rem">${c.name}</strong>
-            ${full
-              ? `<span style="background:rgba(255,0,51,0.12);color:#ff0033;padding:3px 10px;border-radius:12px;font-size:0.72rem;font-weight:700">Full</span>`
-              : `<span style="background:rgba(0,200,80,0.1);color:#00c853;padding:3px 10px;border-radius:12px;font-size:0.72rem;font-weight:700;white-space:nowrap">${cap - booked} open</span>`
-            }
-          </div>
-          <div style="font-size:0.83rem;opacity:0.65">🕐 ${c.time}</div>
-          <div>
-            <div style="display:flex;justify-content:space-between;font-size:0.75rem;opacity:0.55;margin-bottom:4px">
-              <span>Bookings</span><span>${booked}/${cap}</span>
+  function buildClassCards() {
+    let html = "";
+    for (const day of DAYS) {
+      const dayClasses = classes.filter(c => c.day === day);
+      if (!dayClasses.length) continue;
+      html += `<div style="margin-bottom:28px">
+        <h3 style="font-family:Orbitron,sans-serif;font-size:0.78rem;letter-spacing:2px;color:#0887e2;
+          margin:0 0 12px;text-transform:uppercase;padding-bottom:6px;border-bottom:1px solid rgba(8,165,226,0.2)">${day}</h3>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px">`;
+      for (const c of dayClasses) {
+        const booked = counts[c.id] || 0;
+        const cap = c.capacity || 20;
+        const pct = Math.min((booked / cap) * 100, 100);
+        const barColor = pct >= 90 ? "#ff0033" : pct >= 60 ? "#e96d25" : "#00c853";
+        const typeColor = TYPE_COLORS[c.type] || "#00c853";
+        const fillBadge = pct >= 100
+          ? `<span style="background:rgba(255,0,51,0.12);color:#ff0033;padding:2px 9px;border-radius:10px;font-size:0.7rem;font-weight:700">FULL</span>`
+          : `<span style="background:rgba(0,200,80,0.1);color:#00c853;padding:2px 9px;border-radius:10px;font-size:0.7rem;font-weight:700">${cap - booked} open</span>`;
+        html += `
+          <div class="card" style="display:flex;flex-direction:column;gap:10px;padding:18px;cursor:default;border-top:3px solid ${typeColor}">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+              <div>
+                <strong style="font-size:1rem;display:block;margin-bottom:4px">${c.name}</strong>
+                <span style="background:${typeColor}22;color:${typeColor};padding:2px 8px;border-radius:6px;font-size:0.7rem;font-weight:600">${c.type || "General"}</span>
+              </div>
+              ${fillBadge}
             </div>
-            <div style="background:rgba(255,255,255,0.1);border-radius:4px;height:5px;overflow:hidden">
-              <div style="width:${pct}%;height:100%;background:${barColor};border-radius:4px"></div>
+            <div style="font-size:0.82rem;opacity:0.65;display:flex;flex-direction:column;gap:4px">
+              <span>🕐 ${c.time}${c.duration ? " · " + c.duration + " min" : ""}</span>
+              ${c.location ? "<span>📍 " + c.location + "</span>" : ""}
+              ${c.description ? `<span style="opacity:0.75;font-size:0.77rem;line-height:1.4;margin-top:2px">${c.description}</span>` : ""}
             </div>
-          </div>
-          <button class="tc-del-btn" data-id="${c.id}" data-name="${c.name}"
-            style="padding:7px;border:1px solid rgba(255,0,51,0.35);border-radius:6px;background:transparent;
-            color:#ff0033;cursor:pointer;font-size:0.8rem;font-weight:600;width:100%;transition:0.2s">Delete Class</button>
-        </div>`;
+            <div>
+              <div style="display:flex;justify-content:space-between;font-size:0.75rem;opacity:0.55;margin-bottom:5px">
+                <span>Enrolled</span><span>${booked} / ${cap}</span>
+              </div>
+              <div style="background:rgba(255,255,255,0.1);border-radius:4px;height:6px;overflow:hidden">
+                <div style="width:${pct}%;height:100%;background:${barColor};border-radius:4px;transition:width 0.6s"></div>
+              </div>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <button class="tc-roster-btn" data-id="${c.id}" data-name="${c.name}"
+                style="flex:1;min-width:80px;padding:7px;border:none;border-radius:6px;background:rgba(8,135,226,0.15);
+                color:#0887e2;cursor:pointer;font-size:0.78rem;font-weight:600;transition:0.2s">👥 (${booked})</button>
+              <button class="tc-edit-btn" data-id="${c.id}"
+                data-name="${c.name}" data-type="${c.type||''}" data-day="${c.day||''}"
+                data-time="${c.time||''}" data-duration="${c.duration||60}" data-capacity="${c.capacity||20}"
+                data-location="${(c.location||'').replace(/"/g,'&quot;')}" data-desc="${(c.description||'').replace(/"/g,'&quot;')}"
+                data-public="${c.isPublic ? '1' : '0'}"
+                style="flex:1;min-width:60px;padding:7px;border:1px solid rgba(8,135,226,0.3);border-radius:6px;
+                background:transparent;color:#0887e2;cursor:pointer;font-size:0.78rem;font-weight:600">✏️ Edit</button>
+              <button class="tc-attendance-btn" data-id="${c.id}" data-name="${c.name}"
+                style="flex:1;min-width:70px;padding:7px;border:1px solid rgba(0,200,80,0.3);border-radius:6px;
+                background:transparent;color:#00c853;cursor:pointer;font-size:0.78rem;font-weight:600">✓ Attendance</button>
+              <button class="tc-waitlist-btn" data-id="${c.id}" data-name="${c.name}"
+                style="flex:1;min-width:70px;padding:7px;border:1px solid rgba(233,109,37,0.3);border-radius:6px;
+                background:transparent;color:#e96d25;cursor:pointer;font-size:0.78rem;font-weight:600">⏳ Waitlist</button>
+              <button class="tc-del-btn" data-id="${c.id}" data-name="${c.name}"
+                style="flex-shrink:0;padding:7px 14px;border:1px solid rgba(255,0,51,0.35);border-radius:6px;
+                background:transparent;color:#ff0033;cursor:pointer;font-size:0.78rem;font-weight:600;transition:0.2s">Delete</button>
+            </div>
+          </div>`;
+      }
+      html += `</div></div>`;
     }
-    classCards += `</div>`;
-  }
-  if (!classCards) {
-    classCards = `<div class="card" style="text-align:center;opacity:0.5;padding:30px">You haven't created any classes yet.</div>`;
+    if (!html) html = `<div class="card" style="text-align:center;opacity:0.5;padding:40px">
+      You haven't created any classes yet.<br>
+      <span style="font-size:0.85rem;margin-top:8px;display:block">Use the form above to schedule your first class.</span></div>`;
+    return html;
   }
 
   panel.innerHTML = `
-    <h2 style="color:#0887e2;margin-bottom:20px">My Classes</h2>
-    ${statsHtml}
-
-    <div class="card" style="margin-bottom:24px;padding:20px">
-      <h3 style="margin-bottom:16px">Create New Class</h3>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-        <input id="tc-name" type="text" placeholder="Class Name"
-          style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-          background:rgba(255,255,255,0.05);color:inherit;font-family:inherit">
-        <select id="tc-day"
-          style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-          background:rgba(255,255,255,0.05);color:inherit;font-family:inherit">
-          ${dayOpts}
-        </select>
-        <input id="tc-time" type="time"
-          style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-          background:rgba(255,255,255,0.05);color:inherit;font-family:inherit">
-        <input id="tc-capacity" type="number" min="1" placeholder="Capacity" value="20"
-          style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-          background:rgba(255,255,255,0.05);color:inherit;font-family:inherit">
-      </div>
-      <button id="tc-create-btn" style="margin-top:14px;padding:10px 28px;border:none;border-radius:8px;
-        background:linear-gradient(90deg,#0887e2,#006af5);color:#fff;cursor:pointer;
-        font-family:inherit;font-weight:600">+ Create Class</button>
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:22px">
+      <h2 style="color:#0887e2;margin:0">My Classes</h2>
+      <button id="tc-toggle-form" style="padding:8px 18px;border:1px solid rgba(8,165,226,0.4);border-radius:20px;
+        background:rgba(8,135,226,0.1);color:#0887e2;cursor:pointer;font-size:0.83rem;font-weight:600;
+        font-family:inherit;transition:0.2s">+ New Class</button>
     </div>
 
-    <div id="tc-class-list">${classCards}</div>
-  `;
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:24px">
+      <div class="card" style="text-align:center;padding:16px;cursor:default">
+        <div style="font-size:1.8rem;font-weight:700;color:#0887e2">${classes.length}</div>
+        <div style="font-size:0.72rem;opacity:0.6;margin-top:4px;text-transform:uppercase;letter-spacing:1px">Classes</div>
+      </div>
+      <div class="card" style="text-align:center;padding:16px;cursor:default">
+        <div style="font-size:1.8rem;font-weight:700;color:#e96d25">${totalBooked}</div>
+        <div style="font-size:0.72rem;opacity:0.6;margin-top:4px;text-transform:uppercase;letter-spacing:1px">Enrolled</div>
+      </div>
+      <div class="card" style="text-align:center;padding:16px;cursor:default">
+        <div style="font-size:1.8rem;font-weight:700;color:#00c853">${totalCap - totalBooked}</div>
+        <div style="font-size:0.72rem;opacity:0.6;margin-top:4px;text-transform:uppercase;letter-spacing:1px">Open Spots</div>
+      </div>
+      <div class="card" style="text-align:center;padding:16px;cursor:default">
+        <div style="font-size:1.8rem;font-weight:700;color:#7c4dff">${fillRate}%</div>
+        <div style="font-size:0.72rem;opacity:0.6;margin-top:4px;text-transform:uppercase;letter-spacing:1px">Fill Rate</div>
+      </div>
+    </div>
 
-  // Create handler
-  document.getElementById("tc-create-btn").addEventListener("click", async () => {
-    const name = document.getElementById("tc-name").value.trim();
-    const day = document.getElementById("tc-day").value;
-    const time = document.getElementById("tc-time").value;
-    const capacity = parseInt(document.getElementById("tc-capacity").value) || 20;
-    if (!name) { showToast("Enter a class name.", "error"); return; }
-    if (!time) { showToast("Select a time.", "error"); return; }
-    try {
-      await createClass(trainerUid, trainerName, { name, day, time, capacity });
-      showToast("Class created!", "success");
-      _loadTrainerClassesPanel(trainerUid, trainerName);
-    } catch (e) {
-      showToast(e.message, "error");
-    }
+    <div id="tc-create-form" style="display:none">
+      <div class="card" style="padding:22px;margin-bottom:24px">
+        <h3 style="margin:0 0 18px;font-size:1rem">Create New Class</h3>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+          <input id="tc-name" type="text" placeholder="Class Name"
+            style="padding:10px 14px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
+            background:rgba(255,255,255,0.05);color:inherit;font-family:inherit">
+          <select id="tc-type"
+            style="padding:10px 14px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
+            background:rgba(255,255,255,0.05);color:inherit;font-family:inherit">${typeOpts}</select>
+          <select id="tc-day"
+            style="padding:10px 14px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
+            background:rgba(255,255,255,0.05);color:inherit;font-family:inherit">${dayOpts}</select>
+          <input id="tc-time" type="time"
+            style="padding:10px 14px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
+            background:rgba(255,255,255,0.05);color:inherit;font-family:inherit">
+          <input id="tc-duration" type="number" min="15" step="15" placeholder="Duration (min)" value="60"
+            style="padding:10px 14px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
+            background:rgba(255,255,255,0.05);color:inherit;font-family:inherit">
+          <input id="tc-capacity" type="number" min="1" placeholder="Max Capacity" value="20"
+            style="padding:10px 14px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
+            background:rgba(255,255,255,0.05);color:inherit;font-family:inherit">
+        </div>
+        <input id="tc-location" type="text" placeholder="Location / Room (optional)"
+          style="width:100%;box-sizing:border-box;padding:10px 14px;border-radius:8px;
+          border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);
+          color:inherit;font-family:inherit;margin-bottom:12px">
+        <textarea id="tc-desc" rows="2" placeholder="Description (optional)"
+          style="width:100%;box-sizing:border-box;padding:10px 14px;border-radius:8px;
+          border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);
+          color:inherit;font-family:inherit;resize:vertical;margin-bottom:8px"></textarea>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:0.88rem;margin-bottom:14px">
+          <input type="checkbox" id="tc-public" checked style="width:16px;height:16px;accent-color:#0887e2">
+          Open to all gym members (uncheck = your linked clients only)
+        </label>
+        <button id="tc-create-btn" style="padding:10px 28px;border:none;border-radius:8px;
+          background:linear-gradient(90deg,#0887e2,#006af5);color:#fff;cursor:pointer;
+          font-family:inherit;font-weight:600;font-size:0.9rem">+ Create Class</button>
+      </div>
+    </div>
+
+    <div id="tc-class-list">${buildClassCards()}</div>`;
+
+  document.getElementById("tc-toggle-form").addEventListener("click", () => {
+    const form = document.getElementById("tc-create-form");
+    const btn  = document.getElementById("tc-toggle-form");
+    const open = form.style.display === "none";
+    form.style.display = open ? "block" : "none";
+    btn.textContent = open ? "✕ Close" : "+ New Class";
   });
 
-  // Delete handlers
+  document.getElementById("tc-create-btn").addEventListener("click", async () => {
+    const name     = document.getElementById("tc-name").value.trim();
+    const type     = document.getElementById("tc-type").value;
+    const day      = document.getElementById("tc-day").value;
+    const time     = document.getElementById("tc-time").value;
+    const duration = parseInt(document.getElementById("tc-duration").value) || 60;
+    const capacity = parseInt(document.getElementById("tc-capacity").value) || 20;
+    const location = document.getElementById("tc-location").value.trim();
+    const desc     = document.getElementById("tc-desc").value.trim();
+    const isPublic = document.getElementById("tc-public").checked;
+    if (!name) { showToast("Enter a class name.", "error"); return; }
+    if (!time) { showToast("Select a time.", "error"); return; }
+    const btn = document.getElementById("tc-create-btn");
+    btn.disabled = true; btn.textContent = "Creating…";
+    try {
+      await createClass(trainerUid, trainerName, { name, type, day, time, duration, capacity, location, description: desc, isPublic });
+      showToast(
+        isPublic
+          ? "Class created! Visible to all clients."
+          : "Class created! Visible to clients who hired you.",
+        "success"
+      );
+      _loadTrainerClassesPanel(trainerUid, trainerName);
+    } catch(e) { showToast(e.message, "error"); btn.disabled = false; btn.textContent = "+ Create Class"; }
+  });
+
+  panel.querySelectorAll(".tc-roster-btn").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const classId = btn.dataset.id, className = btn.dataset.name;
+      btn.disabled = true; btn.textContent = "Loading…";
+      try {
+        const roster = await getClassRoster(classId);
+        if (!roster.length) {
+          showModal("Roster — " + className,
+            `<p style="text-align:center;opacity:0.6;padding:20px">No one enrolled yet.</p>`);
+        } else {
+          const rows = roster.map((r, i) => `
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;
+              border-radius:8px;background:rgba(8,165,226,0.06);border:1px solid rgba(8,165,226,0.12);margin-bottom:8px">
+              <div>
+                <strong style="font-size:0.9rem">${r.clientName || "Member"}</strong>
+                <div style="font-size:0.75rem;opacity:0.5;margin-top:2px">
+                  Joined ${r.joinedAt ? new Date(r.joinedAt).toLocaleDateString() : "—"}
+                </div>
+              </div>
+              <span style="background:rgba(0,200,80,0.1);color:#00c853;padding:2px 8px;border-radius:8px;font-size:0.72rem">#${i + 1}</span>
+            </div>`).join("");
+          showModal(`Roster — ${className} (${roster.length})`,
+            `<div style="max-height:55vh;overflow-y:auto;padding-right:4px">${rows}</div>`);
+        }
+      } catch(e) { showToast(e.message, "error"); }
+      btn.disabled = false; btn.textContent = "👥 Roster (" + (counts[classId] || 0) + ")";
+    });
+  });
+
   panel.querySelectorAll(".tc-del-btn").forEach(btn => {
     btn.addEventListener("click", () => {
-      showModal("Delete Class", `<p>Delete <strong>${btn.dataset.name}</strong>?</p>`, async () => {
+      showModal("Delete Class", `<p>Delete <strong>${btn.dataset.name}</strong>? All bookings will be removed.</p>`, async () => {
         await deleteClass(btn.dataset.id);
         showToast("Class deleted.", "success");
         _loadTrainerClassesPanel(trainerUid, trainerName);
       });
+    });
+  });
+
+  // Edit class
+  const EDIT_CLASS_TYPES = ["Cardio","HIIT","Yoga","Pilates","Strength","Cycling","Boxing","Dance","Bootcamp","Swimming","General"];
+  panel.querySelectorAll(".tc-edit-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const d = btn.dataset;
+      const dayOpts2 = DAYS.map(dy => `<option value="${dy}" ${dy === d.day ? "selected" : ""}>${dy}</option>`).join("");
+      const typeOpts2 = EDIT_CLASS_TYPES.map(t => `<option value="${t}" ${t === d.type ? "selected" : ""}>${t}</option>`).join("");
+      showModal("Edit Class — " + d.name, `
+        <div style="display:grid;gap:10px">
+          <input id="edit-name" value="${d.name}" placeholder="Class Name"
+            style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <select id="edit-type" style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:#1a1a2e;color:#fff;font-family:Poppins,sans-serif">${typeOpts2}</select>
+            <select id="edit-day" style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:#1a1a2e;color:#fff;font-family:Poppins,sans-serif">${dayOpts2}</select>
+            <input id="edit-time" type="time" value="${d.time||''}"
+              style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+            <input id="edit-duration" type="number" min="15" step="15" value="${d.duration||60}"
+              placeholder="Duration (min)"
+              style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+            <input id="edit-capacity" type="number" min="1" value="${d.capacity||20}"
+              placeholder="Max Capacity"
+              style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+            <input id="edit-location" value="${d.location||''}" placeholder="Location / Room"
+              style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+          </div>
+          <textarea id="edit-desc" rows="2" placeholder="Description"
+            style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif;resize:vertical">${d.desc||''}</textarea>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:0.88rem;color:#fff">
+            <input type="checkbox" id="edit-public" ${d.public === '1' ? 'checked' : ''} style="accent-color:#0887e2">
+            Open to all gym members
+          </label>
+        </div>
+      `, async () => {
+        try {
+          await updateClass(d.id, {
+            name: document.getElementById("edit-name").value.trim() || d.name,
+            type: document.getElementById("edit-type").value,
+            day: document.getElementById("edit-day").value,
+            time: document.getElementById("edit-time").value,
+            duration: parseInt(document.getElementById("edit-duration").value) || 60,
+            capacity: parseInt(document.getElementById("edit-capacity").value) || 20,
+            location: document.getElementById("edit-location").value.trim(),
+            description: document.getElementById("edit-desc").value.trim(),
+            isPublic: document.getElementById("edit-public").checked,
+            updatedAt: Date.now()
+          });
+          showToast("Class updated.", "success");
+          _loadTrainerClassesPanel(trainerUid, trainerName);
+        } catch (e) { showToast(e.message, "error"); }
+      });
+    });
+  });
+
+  // Attendance
+  panel.querySelectorAll(".tc-attendance-btn").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const classId = btn.dataset.id, className = btn.dataset.name;
+      btn.disabled = true; btn.textContent = "Loading…";
+      try {
+        const [roster, attendance] = await Promise.all([getClassRoster(classId), getClassAttendance(classId)]);
+        if (!roster.length) {
+          showModal("Attendance — " + className, `<p style="opacity:0.6;text-align:center;padding:20px">No one enrolled yet.</p>`);
+        } else {
+          const rows = roster.map(r => {
+            const checked = attendance[r.clientId] && attendance[r.clientId].attended;
+            return `<div style="display:flex;justify-content:space-between;align-items:center;
+              padding:10px 14px;border-radius:8px;background:rgba(255,255,255,0.04);
+              border:1px solid rgba(255,255,255,0.1);margin-bottom:8px">
+              <strong style="font-size:0.9rem">${r.clientName || r.clientId}</strong>
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.85rem">
+                <input type="checkbox" class="att-check" data-client="${r.clientId}"
+                  ${checked ? "checked" : ""} style="accent-color:#00c853;width:16px;height:16px">
+                Attended
+              </label>
+            </div>`;
+          }).join("");
+          showModal(`Attendance — ${className}`, `
+            <div style="max-height:55vh;overflow-y:auto;padding-right:4px">${rows}</div>
+            <p style="opacity:0.55;font-size:0.78rem;margin-top:8px">Changes save automatically when you click Save.</p>
+          `, async () => {
+            try {
+              const checks = document.querySelectorAll(".att-check");
+              const saves = [...checks].map(c => markAttendance(classId, c.dataset.client, c.checked));
+              await Promise.all(saves);
+              showToast("Attendance saved.", "success");
+            } catch (e) { showToast(e.message, "error"); }
+          });
+        }
+      } catch(e) { showToast(e.message, "error"); }
+      btn.disabled = false; btn.textContent = "✓ Attendance";
+    });
+  });
+
+  // Waitlist management
+  panel.querySelectorAll(".tc-waitlist-btn").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const classId = btn.dataset.id, className = btn.dataset.name;
+      btn.disabled = true; btn.textContent = "Loading…";
+      try {
+        const waitlist = await getWaitlist(classId);
+        if (!waitlist.length) {
+          showModal("Waitlist — " + className, `<p style="opacity:0.6;text-align:center;padding:20px">Waitlist is empty.</p>`);
+        } else {
+          const rows = waitlist.map((w, i) => `
+            <div style="display:flex;justify-content:space-between;align-items:center;
+              padding:10px 14px;border-radius:8px;background:rgba(233,109,37,0.06);
+              border:1px solid rgba(233,109,37,0.18);margin-bottom:8px">
+              <div>
+                <span style="font-size:0.78rem;color:#e96d25;margin-right:6px">#${i+1}</span>
+                <strong style="font-size:0.88rem">${w.clientName || w.clientId}</strong>
+                <div style="font-size:0.72rem;opacity:0.5">Joined ${new Date(w.joinedAt || 0).toLocaleDateString()}</div>
+              </div>
+              <button class="wl-promote-btn" data-classid="${classId}" data-clientid="${w.clientId}"
+                style="padding:5px 12px;border:none;border-radius:6px;background:rgba(0,200,80,0.2);
+                color:#00c853;cursor:pointer;font-size:0.75rem;font-weight:600">Promote</button>
+            </div>`).join("");
+          showModal(`Waitlist — ${className} (${waitlist.length})`,
+            `<div style="max-height:55vh;overflow-y:auto;padding-right:4px">${rows}</div>`);
+          // Bind promote buttons after modal renders
+          setTimeout(() => {
+            document.querySelectorAll(".wl-promote-btn").forEach(pb => {
+              pb.addEventListener("click", async () => {
+                pb.disabled = true; pb.textContent = "…";
+                const promoted = await promoteFromWaitlist(pb.dataset.classid);
+                if (promoted) { showToast(`${promoted.clientName} promoted from waitlist!`, "success"); }
+                else { showToast("Could not promote — class may still be full.", "error"); }
+                document.getElementById("xgym-modal").style.display = "none";
+                _loadTrainerClassesPanel(trainerUid, trainerName);
+              });
+            });
+          }, 80);
+        }
+      } catch(e) { showToast(e.message, "error"); }
+      btn.disabled = false; btn.textContent = "⏳ Waitlist";
     });
   });
 }
@@ -3637,6 +4975,7 @@ async function initTrainerPage() {
   if (logoutBtnEarly) logoutBtnEarly.addEventListener("click", logoutUser);
 
   const user = await waitForAuth();
+  if (user) _syncPendingStoreActions(user.uid);
   if (!user) {
     // DEV/TEST MODE: skip redirect so pages can be opened directly
     console.warn("[X-Gym] Trainer page: no user logged in — skipping redirect (test mode)");
@@ -3708,7 +5047,12 @@ async function initTrainerPage() {
     _bindCardToPanel("card-membership",     "panel-membership");
     _bindCardToPanel("card-client-progress","panel-clients");
     _bindCardToPanel("card-store",          "panel-share-code");
-    _bindCardToPanel("card-classes",         "panel-classes");
+    // Reload My Classes panel on every card/nav open so fresh class data is always shown
+    _bindCardToPanelWithReload("card-classes", "panel-classes",
+      () => _loadTrainerClassesPanel(user.uid, profile.name));
+    document.querySelectorAll('.nav-item[data-panel="panel-classes"]').forEach(item => {
+      item.addEventListener('click', () => _loadTrainerClassesPanel(user.uid, profile.name));
+    });
     _bindCardToPanel("card-messenger",        "panel-messenger");
     _bindCardToPanel("card-settings",       "panel-settings");
 
@@ -3717,10 +5061,12 @@ async function initTrainerPage() {
     _loadTrainerClientsPanel(user.uid);
     _loadTrainerWorkoutBuilderPanel(user.uid);
     _loadTrainerMealPlannerPanel(user.uid);
-    _loadCartPanel();
+    _loadCartPanel(user.uid);
     _loadTrainerMembershipPanel(user.uid);
     _loadTrainerClassesPanel(user.uid, profile.name);
     _loadTrainerMessengerPanel(user.uid, profile.name);
+    _loadSettingsPanel(user.uid);
+    _startTrainerNotifListeners(user.uid);
   }
 }
 
@@ -3946,7 +5292,7 @@ async function _loadTrainerClientsPanel(trainerUid) {
 
   panel.innerHTML = `
     <h2 style="color:#0887e2">&#x1F465; Clients</h2>
-    <div style="display:flex;gap:8px;margin-bottom:20px">
+    <div style="display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap">
       <button id="tc-tab-invites" style="padding:9px 22px;border:none;border-radius:8px;
         background:linear-gradient(90deg,#0887e2,#006af5);color:#fff;cursor:pointer;font-family:Poppins,sans-serif;font-weight:600">
         Invites <span id="tc-invite-count" style="margin-left:6px;background:rgba(255,255,255,0.25);border-radius:20px;padding:1px 8px;font-size:0.78rem"></span>
@@ -3955,23 +5301,28 @@ async function _loadTrainerClientsPanel(trainerUid) {
         background:rgba(255,255,255,0.1);color:#fff;cursor:pointer;font-family:Poppins,sans-serif">
         Hired Clients
       </button>
+      <button id="tc-tab-hours" style="padding:9px 22px;border:none;border-radius:8px;
+        background:rgba(255,255,255,0.1);color:#fff;cursor:pointer;font-family:Poppins,sans-serif">
+        Hours &amp; Sessions
+      </button>
     </div>
     <div id="tc-invites-panel"></div>
     <div id="tc-hired-panel" style="display:none"></div>
+    <div id="tc-hours-panel" style="display:none"></div>
   `;
 
-  document.getElementById("tc-tab-invites").addEventListener("click", () => {
-    document.getElementById("tc-invites-panel").style.display = "";
-    document.getElementById("tc-hired-panel").style.display = "none";
-    document.getElementById("tc-tab-invites").style.background = "linear-gradient(90deg,#0887e2,#006af5)";
-    document.getElementById("tc-tab-hired").style.background = "rgba(255,255,255,0.1)";
-  });
-  document.getElementById("tc-tab-hired").addEventListener("click", () => {
-    document.getElementById("tc-invites-panel").style.display = "none";
-    document.getElementById("tc-hired-panel").style.display = "";
-    document.getElementById("tc-tab-invites").style.background = "rgba(255,255,255,0.1)";
-    document.getElementById("tc-tab-hired").style.background = "linear-gradient(90deg,#0887e2,#006af5)";
-  });
+  const setTab = (active) => {
+    ["invites","hired","hours"].forEach(t => {
+      const btn = document.getElementById("tc-tab-" + t);
+      const pnl = document.getElementById("tc-" + t + "-panel");
+      if (btn) btn.style.background = t === active ? "linear-gradient(90deg,#0887e2,#006af5)" : "rgba(255,255,255,0.1)";
+      if (pnl) pnl.style.display = t === active ? "" : "none";
+    });
+  };
+
+  document.getElementById("tc-tab-invites").addEventListener("click", () => setTab("invites"));
+  document.getElementById("tc-tab-hired").addEventListener("click", () => { setTab("hired"); _refreshTrainerHiredList(trainerUid); });
+  document.getElementById("tc-tab-hours").addEventListener("click", () => { setTab("hours"); _loadTrainerHoursPanel(trainerUid); });
 
   _refreshTrainerInvitesList(trainerUid);
   _refreshTrainerHiredList(trainerUid);
@@ -4092,11 +5443,16 @@ async function _refreshTrainerHiredList(trainerUid) {
           <strong style="color:#0887e2">${client.name}</strong>
           <div style="font-size:0.8rem;opacity:0.6;margin-top:2px">${client.email || ""}</div>
         </div>
-        <div style="display:flex;gap:8px">
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button class="tc-viewbio-btn" data-cid="${client.id}" data-cname="${client.name}"
             style="padding:7px 14px;border:1px solid rgba(8,135,226,0.4);border-radius:8px;
                    background:transparent;color:#0887e2;cursor:pointer;font-family:Poppins,sans-serif;font-size:0.82rem">
             View Bio
+          </button>
+          <button class="tc-logsession-btn" data-cid="${client.id}" data-cname="${client.name}"
+            style="padding:7px 14px;border:none;border-radius:8px;
+                   background:rgba(0,200,80,0.15);color:#00c853;cursor:pointer;font-family:Poppins,sans-serif;font-size:0.82rem">
+            Log Session
           </button>
           <button class="tc-viewdetail-btn" data-cid="${client.id}" data-cname="${client.name}"
             style="padding:7px 14px;border:none;border-radius:8px;
@@ -4134,6 +5490,75 @@ async function _refreshTrainerHiredList(trainerUid) {
         showModal(`${name}'s Profile`, msg, null);
       });
     });
+
+    // Log Training Session
+    container.querySelectorAll(".tc-logsession-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const clientId2 = btn.dataset.cid, clientName2 = btn.dataset.cname;
+        const today = new Date().toISOString().split("T")[0];
+        showModal(`Log Session — ${clientName2}`, `
+          <div style="display:grid;gap:10px">
+            <input id="ls-date" type="date" value="${today}"
+              style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+              <div>
+                <label style="font-size:0.8rem;opacity:0.65;display:block;margin-bottom:4px">Start Time</label>
+                <input id="ls-start" type="time" value="09:00"
+                  style="width:100%;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+              </div>
+              <div>
+                <label style="font-size:0.8rem;opacity:0.65;display:block;margin-bottom:4px">End Time</label>
+                <input id="ls-end" type="time" value="10:00"
+                  style="width:100%;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+              </div>
+            </div>
+            <div id="ls-duration-display" style="font-size:0.82rem;color:#0887e2;opacity:0.8">Duration: 60 min</div>
+            <select id="ls-type"
+              style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:#1a1a2e;color:#fff;font-family:Poppins,sans-serif">
+              <option>Personal Training</option>
+              <option>Online</option>
+              <option>Assessment</option>
+              <option>Group</option>
+              <option>Rehabilitation</option>
+            </select>
+            <textarea id="ls-notes" rows="2" placeholder="Notes (optional)"
+              style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif;resize:vertical"></textarea>
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:0.88rem;color:#fff">
+              <input type="checkbox" id="ls-paid" style="accent-color:#00c853;width:16px;height:16px"> Mark as Paid
+            </label>
+          </div>
+        `, async () => {
+          const startTime = document.getElementById("ls-start").value;
+          const endTime   = document.getElementById("ls-end").value;
+          const dur = _calcSessionDuration(startTime, endTime);
+          try {
+            await logTrainingSession(trainerUid, clientId2, {
+              date:            document.getElementById("ls-date").value,
+              startTime,
+              endTime,
+              durationMinutes: dur,
+              type:            document.getElementById("ls-type").value,
+              notes:           (document.getElementById("ls-notes").value || "").trim(),
+              paid:            document.getElementById("ls-paid").checked
+            });
+            showToast(`Session logged for ${clientName2}.`, "success");
+          } catch(e) { showToast(e.message, "error"); }
+        });
+        // Live duration update
+        setTimeout(() => {
+          const updateDur = () => {
+            const s = document.getElementById("ls-start");
+            const e2 = document.getElementById("ls-end");
+            const d = document.getElementById("ls-duration-display");
+            if (s && e2 && d) d.textContent = "Duration: " + _calcSessionDuration(s.value, e2.value) + " min";
+          };
+          ["ls-start","ls-end"].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.addEventListener("change", updateDur);
+          });
+        }, 60);
+      });
+    });
     container.querySelectorAll(".tc-viewdetail-btn").forEach(btn => {
       btn.addEventListener("click", () => {
         _loadClientDetailPanel(btn.dataset.cid, btn.dataset.cname);
@@ -4147,6 +5572,145 @@ async function _refreshTrainerHiredList(trainerUid) {
   }
 }
 
+async function _loadTrainerHoursPanel(trainerUid) {
+  const container = document.getElementById("tc-hours-panel");
+  if (!container) return;
+  container.innerHTML = `<p style="opacity:0.5">Loading sessions…</p>`;
+  try {
+    const [summary, sessions, hireds] = await Promise.all([
+      getTrainerHoursSummary(trainerUid),
+      getTrainerSessions(trainerUid),
+      getTrainerHiredClients(trainerUid)
+    ]);
+    const clientMap = {};
+    hireds.forEach(c => { clientMap[c.id] = c.name || c.id; });
+
+    const fh = (h) => Number(h || 0).toFixed(1);
+    container.innerHTML = `
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin-bottom:20px">
+        <div class="card" style="text-align:center;cursor:default">
+          <h3 style="margin:0;color:#0887e2">${fh(summary.totalHours)}</h3>
+          <p style="margin-top:6px;font-size:0.8rem;opacity:0.7">Total Hours</p>
+        </div>
+        <div class="card" style="text-align:center;cursor:default">
+          <h3 style="margin:0;color:#00c853">${fh(summary.monthHours)}</h3>
+          <p style="margin-top:6px;font-size:0.8rem;opacity:0.7">This Month</p>
+        </div>
+        <div class="card" style="text-align:center;cursor:default">
+          <h3 style="margin:0;color:#e96d25">${summary.totalSessions}</h3>
+          <p style="margin-top:6px;font-size:0.8rem;opacity:0.7">Total Sessions</p>
+        </div>
+        <div class="card" style="text-align:center;cursor:default">
+          <h3 style="margin:0;color:#7c4dff">${summary.monthSessions}</h3>
+          <p style="margin-top:6px;font-size:0.8rem;opacity:0.7">Sessions (Month)</p>
+        </div>
+      </div>
+      <div id="trainer-sessions-list"></div>
+    `;
+    const listEl = document.getElementById("trainer-sessions-list");
+    if (!sessions.length) {
+      listEl.innerHTML = `<div class="card" style="text-align:center;opacity:0.55;padding:30px">No training sessions logged yet.<br>
+        <span style="font-size:0.82rem;display:block;margin-top:6px">Use "Log Session" on any hired client to get started.</span></div>`;
+      return;
+    }
+    listEl.innerHTML = sessions.map(s => {
+      const cName = clientMap[s.clientId] || s.clientId;
+      const dur = s.durationMinutes >= 60
+        ? Math.floor(s.durationMinutes / 60) + "h " + (s.durationMinutes % 60 ? (s.durationMinutes % 60) + "m" : "")
+        : s.durationMinutes + " min";
+      const paidBadge = s.paid
+        ? `<span style="background:rgba(0,200,80,0.12);color:#00c853;padding:2px 8px;border-radius:8px;font-size:0.72rem;font-weight:700">PAID</span>`
+        : `<span style="background:rgba(255,255,255,0.07);color:rgba(255,255,255,0.45);padding:2px 8px;border-radius:8px;font-size:0.72rem">UNPAID</span>`;
+      return `
+        <div class="card" style="margin-bottom:10px;cursor:default;display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">
+          <div style="flex:1;min-width:200px">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
+              <strong style="color:#0887e2">${cName}</strong>
+              <span style="background:rgba(8,135,226,0.1);color:#0887e2;padding:2px 8px;border-radius:8px;font-size:0.72rem">${s.type || "Personal Training"}</span>
+              ${paidBadge}
+            </div>
+            <div style="font-size:0.82rem;opacity:0.7">
+              📅 ${s.date || "—"}
+              ${s.startTime ? ` &nbsp;·&nbsp; 🕐 ${s.startTime}–${s.endTime}` : ""}
+              &nbsp;·&nbsp; ⏱ ${dur}
+            </div>
+            ${s.notes ? `<div style="font-size:0.78rem;opacity:0.55;margin-top:4px;font-style:italic">${s.notes}</div>` : ""}
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;flex-shrink:0">
+            <button class="ts-edit-btn" data-id="${s.id}"
+              data-date="${s.date||''}" data-start="${s.startTime||''}" data-end="${s.endTime||''}"
+              data-type="${s.type||''}" data-notes="${(s.notes||'').replace(/"/g,'&quot;')}"
+              data-paid="${s.paid ? '1' : '0'}"
+              style="padding:6px 12px;border:1px solid rgba(8,135,226,0.35);border-radius:7px;
+              background:transparent;color:#0887e2;cursor:pointer;font-size:0.78rem">Edit</button>
+            <button class="ts-del-btn" data-id="${s.id}"
+              style="padding:6px 12px;border:1px solid rgba(255,0,51,0.35);border-radius:7px;
+              background:transparent;color:#ff0033;cursor:pointer;font-size:0.78rem">Delete</button>
+          </div>
+        </div>`;
+    }).join("");
+
+    // Edit session
+    listEl.querySelectorAll(".ts-edit-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const d = btn.dataset;
+        showModal("Edit Training Session", `
+          <div style="display:grid;gap:10px">
+            <input id="tse-date" type="date" value="${d.date}"
+              style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+              <input id="tse-start" type="time" value="${d.start}"
+                style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+              <input id="tse-end" type="time" value="${d.end}"
+                style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif">
+            </div>
+            <select id="tse-type" style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:#1a1a2e;color:#fff;font-family:Poppins,sans-serif">
+              ${["Personal Training","Online","Assessment","Group","Rehabilitation"].map(t => `<option ${t === d.type ? "selected" : ""}>${t}</option>`).join("")}
+            </select>
+            <textarea id="tse-notes" rows="2" placeholder="Notes"
+              style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-family:Poppins,sans-serif;resize:vertical">${d.notes}</textarea>
+            <label style="display:flex;align-items:center;gap:8px;color:#fff;font-size:0.88rem;cursor:pointer">
+              <input type="checkbox" id="tse-paid" ${d.paid === '1' ? 'checked' : ''} style="accent-color:#00c853;width:16px;height:16px"> Paid
+            </label>
+          </div>
+        `, async () => {
+          const s2 = document.getElementById("tse-start").value;
+          const e2 = document.getElementById("tse-end").value;
+          try {
+            await updateTrainingSession(d.id, {
+              date:            document.getElementById("tse-date").value,
+              startTime:       s2,
+              endTime:         e2,
+              durationMinutes: _calcSessionDuration(s2, e2),
+              type:            document.getElementById("tse-type").value,
+              notes:           (document.getElementById("tse-notes").value || "").trim(),
+              paid:            document.getElementById("tse-paid").checked,
+              updatedAt:       Date.now()
+            });
+            showToast("Session updated.", "success");
+            _loadTrainerHoursPanel(trainerUid);
+          } catch(e) { showToast(e.message, "error"); }
+        });
+      });
+    });
+
+    // Delete session
+    listEl.querySelectorAll(".ts-del-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        showModal("Delete Session", "<p>Delete this training session?</p>", async () => {
+          try {
+            await deleteTrainingSession(btn.dataset.id);
+            showToast("Session deleted.", "success");
+            _loadTrainerHoursPanel(trainerUid);
+          } catch(e) { showToast(e.message, "error"); }
+        });
+      });
+    });
+  } catch(e) {
+    container.innerHTML = `<p style="color:#ff5577">${e.message}</p>`;
+  }
+}
+
 async function _loadClientDetailPanel(clientId, clientName) {
   const panel = document.getElementById("panel-client-detail");
   if (!panel) return;
@@ -4155,14 +5719,13 @@ async function _loadClientDetailPanel(clientId, clientName) {
     <p style="opacity:0.6">Loading\u2026</p>`;
 
   try {
-    const [progressEntries, meals, workoutSessions, trainerNotes] = await Promise.all([
+    const [progressEntries, meals, workoutSessions, trainerNotes, clientTrainingSessions] = await Promise.all([
       getClientProgress(clientId),
       getClientMeals(clientId),
       getWorkoutSessions(clientId),
-      getTrainerNotes(clientId)
+      getTrainerNotes(clientId),
+      getClientSessions(clientId).catch(() => [])
     ]);
-
-    // Get weekly stats
     let weeklyStats = { workoutsThisWeek: 0, streak: 0, totalVolume: 0, totalSessions: 0 };
     try { weeklyStats = await getWeeklyStats(clientId); } catch(e) {}
 
@@ -4209,6 +5772,28 @@ async function _loadClientDetailPanel(clientId, clientName) {
             <div style="opacity:0.5;font-size:0.75rem;margin-bottom:4px">${formatDate(n.createdAt)}</div>
             ${n.message}
           </div>`).join("");
+
+    const trainSessionsHtml = !clientTrainingSessions.length
+      ? "<p style='opacity:0.5'>No trainer sessions recorded yet.</p>"
+      : clientTrainingSessions.slice(0, 10).map(s => {
+          const dur = s.durationMinutes >= 60
+            ? Math.floor(s.durationMinutes / 60) + "h " + (s.durationMinutes % 60 ? s.durationMinutes % 60 + "m" : "")
+            : s.durationMinutes + " min";
+          return `<div class="card" style="margin-bottom:10px;font-size:0.85rem;cursor:default">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+              <div>
+                <span style="background:rgba(8,135,226,0.1);color:#0887e2;padding:2px 8px;border-radius:6px;font-size:0.75rem">${s.type || "Personal Training"}</span>
+                <span style="margin-left:8px;opacity:0.7">${s.date || "—"}</span>
+                ${s.startTime ? `<span style="opacity:0.55;margin-left:6px;font-size:0.78rem">${s.startTime}–${s.endTime}</span>` : ""}
+              </div>
+              <div style="display:flex;gap:8px;align-items:center">
+                <span style="opacity:0.65">⏱ ${dur}</span>
+                ${s.paid ? `<span style="background:rgba(0,200,80,0.12);color:#00c853;padding:2px 8px;border-radius:8px;font-size:0.72rem">PAID</span>` : ""}
+              </div>
+            </div>
+            ${s.notes ? `<div style="margin-top:6px;opacity:0.55;font-size:0.78rem;font-style:italic">${s.notes}</div>` : ""}
+          </div>`;
+        }).join("");
 
     panel.innerHTML = `
       <h2 style="color:#0887e2">${clientName}'s LiftStreak Dashboard</h2>
@@ -4258,6 +5843,10 @@ async function _loadClientDetailPanel(clientId, clientName) {
       <!-- Workout Sessions (LiftStreak) -->
       <h3 style="margin-top:20px;color:#0887e2">Workout Sessions</h3>
       ${sessionsHtml}
+
+      <!-- Trainer Sessions -->
+      <h3 style="margin-top:20px;color:#00c853">Trainer Sessions</h3>
+      ${trainSessionsHtml}
 
       <!-- Progress -->
       <h3 style="margin-top:20px">Lift Progress</h3>${progressHtml}
@@ -4748,6 +6337,7 @@ async function initAdminPage() {
     _bindCardToPanel("card-trainer-links","panel-trainer-links");
     _bindCardToPanel("card-classes",      "panel-classes");
     _bindCardToPanel("card-messenger",    "panel-messenger");
+    _bindCardToPanel("card-admins",       "panel-admins");
     return;
   }
 
@@ -4774,6 +6364,7 @@ async function initAdminPage() {
     _bindCardToPanel("card-trainer-links","panel-trainer-links");
     _bindCardToPanel("card-classes",      "panel-classes");
     _bindCardToPanel("card-messenger",    "panel-messenger");
+    _bindCardToPanel("card-admins",       "panel-admins");
     return;
   }
   if (profile.role !== "admin") {
@@ -4798,6 +6389,7 @@ async function initAdminPage() {
   _bindCardToPanel("card-trainer-links","panel-trainer-links");
   _bindCardToPanel("card-classes",      "panel-classes");
   _bindCardToPanel("card-messenger",    "panel-messenger");
+  _bindCardToPanel("card-admins",       "panel-admins");
 
   // Load all admin panels with error handling
   try {
@@ -4810,14 +6402,56 @@ async function initAdminPage() {
       _loadAdminFinancesPanel().catch(e => console.error("[X-Gym] Finances panel error:", e)),
       _loadAdminTrainerLinksPanel().catch(e => console.error("[X-Gym] TrainerLinks panel error:", e)),
       _loadAdminClassesPanel().catch(e => console.error("[X-Gym] Classes panel error:", e)),
-      _loadAdminMessengerPanel().catch(e => console.error("[X-Gym] Messenger panel error:", e))
+      _loadAdminMessengerPanel().catch(e => console.error("[X-Gym] Messenger panel error:", e)),
+      _loadAdminAdminsPanel().catch(e => console.error("[X-Gym] Admins panel error:", e))
     ]);
     console.log("[X-Gym] initAdminPage: all panels loaded.");
     showToast("Admin dashboard ready.", "success");
+    _startAdminNotifListeners();
   } catch (e) {
     console.error("[X-Gym] initAdminPage: panel loading error:", e);
     showToast("Some panels failed to load: " + e.message, "error");
   }
+}
+
+// ---------- Admins Panel ----------
+async function _loadAdminAdminsPanel() {
+  const panel = document.getElementById("panel-admins");
+  if (!panel) return;
+
+  panel.innerHTML = `<div style="text-align:center;padding:40px;opacity:0.5">Loading admins…</div>`;
+
+  let admins = [];
+  try {
+    const snap = await db.ref("users").orderByChild("role").equalTo("admin").once("value");
+    snap.forEach(child => admins.push({ id: child.key, ...child.val() }));
+  } catch (e) {
+    panel.innerHTML = `<h2 style="color:#0887e2">Admins</h2><p style="color:#ff0033">${e.message}</p>`;
+    return;
+  }
+
+  const rows = admins.map(a => `
+    <tr style="border-top:1px solid rgba(255,255,255,0.07)">
+      <td style="padding:10px 12px">${a.name || "—"}</td>
+      <td style="padding:10px 12px;opacity:0.6">${a.email || "—"}</td>
+      <td style="padding:10px 12px">
+        <span style="background:rgba(8,135,226,0.15);color:#0887e2;padding:2px 10px;border-radius:8px;font-size:0.75rem;font-weight:600">Admin</span>
+      </td>
+    </tr>`).join("");
+
+  panel.innerHTML = `
+    <h2 style="color:#0887e2;margin-bottom:20px">Admins</h2>
+    <div class="card" style="padding:0;overflow:hidden">
+      ${admins.length ? `
+        <table style="width:100%;border-collapse:collapse;font-size:0.88rem">
+          <thead><tr style="background:rgba(8,135,226,0.08)">
+            <th style="text-align:left;padding:10px 12px;opacity:0.55;font-size:0.75rem;text-transform:uppercase;letter-spacing:1px">Name</th>
+            <th style="text-align:left;padding:10px 12px;opacity:0.55;font-size:0.75rem;text-transform:uppercase;letter-spacing:1px">Email</th>
+            <th style="text-align:left;padding:10px 12px;opacity:0.55;font-size:0.75rem;text-transform:uppercase;letter-spacing:1px">Role</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>` : `<p style="text-align:center;padding:40px;opacity:0.5">No admin accounts found.</p>`}
+    </div>`;
 }
 
 // ---------- Overview / Statistics Panel ----------
@@ -5093,6 +6727,10 @@ async function _loadAdminMembersPanel() {
               style="padding:7px 16px;border:none;border-radius:8px;background:rgba(255,0,60,0.5);color:#fff;cursor:pointer;font-family:Poppins,sans-serif">
               Delete
             </button>
+            <button class="admin-view-cards" data-uid="${m.id}" data-name="${m.name}"
+              style="padding:7px 16px;border:none;border-radius:8px;background:rgba(8,135,226,0.35);color:#fff;cursor:pointer;font-family:Poppins,sans-serif">
+              &#128179; Cards
+            </button>
           </div>
         </div>
       `).join("");
@@ -5138,6 +6776,26 @@ async function _loadAdminMembersPanel() {
               _loadAdminMembersPanel();
             } catch (e) { showToast(e.message, "error"); }
           });
+        });
+      });
+
+      // View Cards buttons (admin sees full card numbers)
+      list.querySelectorAll(".admin-view-cards").forEach(btn => {
+        btn.addEventListener("click", async () => {
+          try {
+            const cards = await getPaymentCards(btn.dataset.uid);
+            if (!cards.length) {
+              showModal(`${btn.dataset.name} — Payment Cards`, `<p style="opacity:0.7">No payment cards saved for this member.</p>`);
+              return;
+            }
+            const cardRows = cards.map(c => `
+              <div style="padding:10px 14px;border-radius:8px;border:1px solid ${c.isDefault ? "rgba(8,165,226,0.5)" : "rgba(255,255,255,0.1)"};background:rgba(255,255,255,0.04);margin-bottom:8px">
+                <div style="font-weight:700;font-size:0.9rem;margin-bottom:4px">${c.cardHolder}${c.isDefault ? ' <span style="color:#0887e2;font-size:0.75rem">(DEFAULT)</span>' : ""}</div>
+                <div style="font-family:monospace;font-size:1rem;letter-spacing:2px;margin-bottom:2px">${(c.cardNumber || "").replace(/(.{4})/g,"$1 ").trim()}</div>
+                <div style="font-size:0.78rem;opacity:0.65">Expires: ${c.expiry}</div>
+              </div>`).join("");
+            showModal(`${btn.dataset.name} — Payment Cards`, `<div>${cardRows}</div>`);
+          } catch (e) { showToast(e.message, "error"); }
         });
       });
     }
@@ -5952,6 +7610,149 @@ async function _loadAdminTrainerLinksPanel() {
 // ============================================================
 // SECTION 11: BOOTSTRAP — Run correct init based on current page
 // ============================================================
+
+// ─── Notification helpers ────────────────────────────────────
+function _notif(type) {
+  if (window.XGymNotifications) window.XGymNotifications.addNotification(type, 1);
+}
+
+function _isPanelOpen(panelId) {
+  const el = document.getElementById(panelId);
+  return el ? el.style.display === "block" : false;
+}
+
+/**
+ * Watch a Firebase ref for NEW children only (skip items that already exist).
+ * Returns an unsubscribe function.
+ */
+function _watchNewChildren(ref, callback) {
+  let existingKeys = null;
+  ref.once("value").then(snap => {
+    existingKeys = new Set();
+    snap.forEach(c => existingKeys.add(c.key));
+    ref.on("child_added", child => {
+      if (existingKeys.has(child.key)) return;
+      existingKeys.add(child.key);
+      callback(child);
+    });
+  });
+  return () => ref.off("child_added");
+}
+
+/**
+ * Start Firebase listeners that feed real notification badges for CLIENT.
+ * Only fires a badge when the relevant panel is NOT already open.
+ */
+async function _startClientNotifListeners(uid) {
+  const linkedTrainerIds = new Set();
+
+  try {
+    // Messages: watch each accepted trainer's conversation
+    const invSnap = await db.ref("client_invites/" + uid).once("value");
+    invSnap.forEach(child => {
+      const data = child.val();
+      const trainerId = data?.trainerId || child.key;
+      if (data && data.status === "accepted" && trainerId) {
+        linkedTrainerIds.add(trainerId);
+        const convoId = [uid, trainerId].sort().join("_");
+
+        // Message notifications
+        _watchNewChildren(db.ref("messages/" + convoId), snap => {
+          const msg = snap.val();
+          if (msg && msg.from !== uid && !_isPanelOpen("panel-messenger")) {
+            _notif("messenger");
+          }
+        });
+      }
+    });
+  } catch(e) { console.error("[X-Gym] Client notif - messages:", e); }
+
+  // New classes: notify booking tab for relevant classes
+  _watchNewChildren(db.ref("classes"), snap => {
+    const c = snap.val();
+    if (!c) return;
+    const isAdminClass    = !c.source || c.source === "admin";
+    const isLinkedTrainer = c.source === "trainer" && linkedTrainerIds.has(c.trainerId);
+    if ((isAdminClass || isLinkedTrainer) && !_isPanelOpen("panel-booking")) {
+      _notif("booking");
+    }
+  });
+
+  // Workouts: new plan assigned to this client
+  _watchNewChildren(
+    db.ref("workouts"),
+    snap => {
+      const d = snap.val();
+      if (d && d.clientId === uid && !_isPanelOpen("panel-workouts")) _notif("workouts");
+    }
+  );
+
+  // Meals: new meal plan assigned to this client
+  _watchNewChildren(
+    db.ref("meals"),
+    snap => {
+      const d = snap.val();
+      if (d && d.clientId === uid && !_isPanelOpen("panel-meals")) _notif("meals");
+    }
+  );
+}
+
+/**
+ * Start Firebase listeners that feed real notification badges for TRAINER.
+ */
+async function _startTrainerNotifListeners(uid) {
+  try {
+    // Messages: watch each linked client's conversation
+    const invSnap = await db.ref("trainer_invites/" + uid).once("value");
+    invSnap.forEach(child => {
+      if (child.val() && child.val().status === "accepted") {
+        const clientId = child.key;
+        const convoId  = [uid, clientId].sort().join("_");
+        _watchNewChildren(db.ref("messages/" + convoId), snap => {
+          const msg = snap.val();
+          if (msg && msg.from !== uid && !_isPanelOpen("panel-messenger")) {
+            _notif("messenger");
+          }
+        });
+      }
+    });
+  } catch(e) { console.error("[X-Gym] Trainer notif - messages:", e); }
+
+  // New client invite received
+  _watchNewChildren(
+    db.ref("trainer_invites/" + uid),
+    () => { if (!_isPanelOpen("panel-clients")) _notif("clients"); }
+  );
+
+  // Class enrollments: watch each of trainer's classes for new participants
+  try {
+    const classSnap = await db.ref("classes").orderByChild("trainerId").equalTo(uid).once("value");
+    classSnap.forEach(child => {
+      _watchNewChildren(
+        db.ref("classes/" + child.key + "/participants"),
+        () => { if (!_isPanelOpen("panel-classes")) _notif("classes"); }
+      );
+    });
+  } catch(e) { console.error("[X-Gym] Trainer notif - classes:", e); }
+}
+
+/**
+ * Start Firebase listeners that feed real notification badges for ADMIN.
+ */
+function _startAdminNotifListeners() {
+  // New user registered
+  _watchNewChildren(
+    db.ref("users"),
+    () => { if (!_isPanelOpen("panel-members")) _notif("members"); }
+  );
+
+  // New trainer-client link accepted
+  _watchNewChildren(
+    db.ref("trainer_clients"),
+    () => { if (!_isPanelOpen("panel-trainer-links")) _notif("trainer-links"); }
+  );
+}
+
 (function bootstrap() {
   const page = detectPage();
   if (page === "index")   initIndexPage();
@@ -6352,13 +8153,17 @@ async function _loadTrainerMessengerPanel(trainerId, trainerName) {
 
   _ensureMessengerStyles();
 
-  // Fetch trainer's clients
+  // Fetch trainer's linked clients via trainer_invites/{trainerId} where status === "accepted"
+  // This uses the same path already indexed by trainerId — no extra Firebase index needed.
   let clients = [];
   try {
-    const clientsSnap = await db.ref("users/" + trainerId + "/clients").once("value");
-    const clientIds = [];
-    clientsSnap.forEach(child => { clientIds.push(child.key); });
-    for (const cid of clientIds) {
+    const invitesSnap = await db.ref("trainer_invites/" + trainerId).once("value");
+    const acceptedClientIds = [];
+    invitesSnap.forEach(child => {
+      const val = child.val();
+      if (val && val.status === "accepted") acceptedClientIds.push(child.key);
+    });
+    for (const cid of acceptedClientIds) {
       const userSnap = await db.ref("users/" + cid).once("value");
       if (userSnap.exists()) clients.push({ id: cid, ...userSnap.val() });
     }
@@ -6550,89 +8355,125 @@ async function _loadAdminClassesPanel() {
   if (!panel) return;
 
   const DAYS = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
-  const classes = await getClasses();
-  const trainers = await getAvailableTrainers();
+  const CLASS_TYPES = ["General","Strength","Cardio","HIIT","Yoga","Pilates","Boxing","Cycling","Stretching","CrossFit"];
+  const TYPE_COLORS = {
+    "Strength":"#e96d25","Cardio":"#ff0033","HIIT":"#ff6b00","Yoga":"#7c4dff",
+    "Pilates":"#e91e63","Boxing":"#f44336","Cycling":"#0887e2","Stretching":"#00bcd4",
+    "CrossFit":"#ff5722","General":"#00c853"
+  };
 
-  // Build booking counts
-  const counts = {};
-  for (const c of classes) {
-    counts[c.id] = await getClassBookingCount(c.id);
+  panel.innerHTML = `<div style="text-align:center;padding:40px;opacity:0.5">Loading class data…</div>`;
+
+  let classes, trainers;
+  try {
+    [classes, trainers] = await Promise.all([getClasses(), getAvailableTrainers()]);
+  } catch(e) {
+    panel.innerHTML = `<h2 style="color:#0887e2">Manage Classes</h2><p style="color:#ff0033">${e.message}</p>`;
+    return;
   }
 
-  const trainerOpts = trainers.map(t =>
-    `<option value="${t.id}" data-name="${t.name}">${t.name}</option>`
-  ).join("");
-
-  const dayOpts = DAYS.map(d => `<option value="${d}">${d}</option>`).join("");
+  const counts = {};
+  for (const c of classes) counts[c.id] = await getClassBookingCount(c.id);
 
   const totalBooked = Object.values(counts).reduce((s, n) => s + n, 0);
-  const totalCap    = classes.reduce((s, c) => s + (c.capacity || 20), 0);
-  const activeDays  = DAYS.filter(d => classes.some(c => c.day === d));
+  const totalCap = classes.reduce((s, c) => s + (c.capacity || 20), 0);
+  const fillRate = totalCap ? Math.round((totalBooked / totalCap) * 100) : 0;
+  const activeDays = DAYS.filter(d => classes.some(c => c.day === d));
 
-  function buildScheduleCards(filterDay) {
+  const trainerOpts = trainers.map(t => `<option value="${t.id}" data-name="${t.name}">${t.name}</option>`).join("");
+  const dayOpts = DAYS.map(d => `<option value="${d}">${d}</option>`).join("");
+  const typeOpts = CLASS_TYPES.map(t => `<option value="${t}">${t}</option>`).join("");
+
+  const inputStyle = `padding:9px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
+    background:rgba(255,255,255,0.05);color:inherit;font-family:inherit;font-size:0.88rem`;
+
+  function buildCards(filterDay, filterTrainer, filterType) {
     const days = filterDay === "All" ? activeDays : (activeDays.includes(filterDay) ? [filterDay] : []);
     let html = "";
     for (const day of days) {
-      const dayClasses = classes.filter(c => c.day === day);
+      let dayClasses = classes.filter(c => c.day === day);
+      if (filterTrainer) dayClasses = dayClasses.filter(c => c.trainerId === filterTrainer);
+      if (filterType && filterType !== "All Types") dayClasses = dayClasses.filter(c => c.type === filterType);
       if (!dayClasses.length) continue;
-      html += `<h3 style="font-family:Orbitron,sans-serif;font-size:0.78rem;letter-spacing:2px;
-        color:#0887e2;margin:20px 0 10px;text-transform:uppercase;padding-bottom:6px;
-        border-bottom:1px solid rgba(8,165,226,0.15)">${day}</h3>
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;margin-bottom:6px">`;
-      for (const c of dayClasses) {
-        const booked = counts[c.id] || 0;
-        const cap = c.capacity || 20;
-        const pct = Math.min((booked / cap) * 100, 100);
-        const full = pct >= 100;
-        const barColor = pct >= 90 ? "#ff0033" : pct >= 60 ? "#e96d25" : "#00c853";
-        html += `
-          <div class="card" style="display:flex;flex-direction:column;gap:10px;padding:16px;cursor:default">
-            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
-              <strong style="font-size:0.97rem">${c.name}</strong>
-              ${full
-                ? `<span style="background:rgba(255,0,51,0.12);color:#ff0033;padding:3px 10px;border-radius:12px;font-size:0.72rem;font-weight:700">Full</span>`
-                : `<span style="background:rgba(0,200,80,0.1);color:#00c853;padding:3px 10px;border-radius:12px;font-size:0.72rem;font-weight:700;white-space:nowrap">${cap - booked} open</span>`
-              }
-            </div>
-            <div style="font-size:0.83rem;opacity:0.65;display:flex;gap:14px;flex-wrap:wrap">
-              <span>🕐 ${c.time}</span>
-              <span>👤 ${c.trainerName || "Unassigned"}</span>
-            </div>
-            <div>
-              <div style="display:flex;justify-content:space-between;font-size:0.75rem;opacity:0.55;margin-bottom:4px">
-                <span>Capacity</span><span>${booked}/${cap}</span>
+      html += `<div style="margin-bottom:24px">
+        <h3 style="font-family:Orbitron,sans-serif;font-size:0.78rem;letter-spacing:2px;color:#0887e2;
+          margin:0 0 12px;text-transform:uppercase;padding-bottom:6px;border-bottom:1px solid rgba(8,165,226,0.15)">${day}</h3>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:12px">
+          ${dayClasses.map(c => {
+            const booked = counts[c.id] || 0;
+            const cap = c.capacity || 20;
+            const pct = Math.min((booked / cap) * 100, 100);
+            const barColor = pct >= 90 ? "#ff0033" : pct >= 60 ? "#e96d25" : "#00c853";
+            const typeColor = TYPE_COLORS[c.type] || "#00c853";
+            return `<div class="card" style="display:flex;flex-direction:column;gap:10px;padding:16px;
+              cursor:default;border-top:3px solid ${typeColor}">
+              <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+                <div>
+                  <strong style="font-size:0.95rem;display:block;margin-bottom:4px">${c.name}</strong>
+                  <span style="background:${typeColor}22;color:${typeColor};padding:1px 7px;border-radius:5px;font-size:0.68rem;font-weight:600">${c.type || "General"}</span>
+                </div>
+                <span style="background:${pct >= 100 ? "rgba(255,0,51,0.12)" : "rgba(0,200,80,0.1)"};
+                  color:${pct >= 100 ? "#ff0033" : "#00c853"};padding:2px 9px;border-radius:10px;font-size:0.7rem;font-weight:700;white-space:nowrap">
+                  ${pct >= 100 ? "FULL" : (cap - booked) + " open"}</span>
               </div>
-              <div style="background:rgba(255,255,255,0.1);border-radius:4px;height:5px;overflow:hidden">
-                <div style="width:${pct}%;height:100%;background:${barColor};border-radius:4px"></div>
+              <div style="font-size:0.82rem;opacity:0.65;display:flex;flex-direction:column;gap:3px">
+                <span>🕐 ${c.time}${c.duration ? " · " + c.duration + " min" : ""} &nbsp;·&nbsp; 👤 ${c.trainerName || "Unassigned"}</span>
+                ${c.location ? "<span>📍 " + c.location + "</span>" : ""}
               </div>
-            </div>
-            <div style="display:flex;gap:8px">
-              <button class="ac-edit-btn" data-id="${c.id}" data-name="${c.name}" data-day="${c.day}"
-                data-time="${c.time}" data-trainer="${c.trainerId}" data-cap="${c.capacity}"
-                style="flex:1;padding:7px;border:none;border-radius:6px;
-                background:linear-gradient(90deg,#0887e2,#006af5);color:#fff;cursor:pointer;
-                font-size:0.78rem;font-weight:600">Edit</button>
-              <button class="ac-del-btn" data-id="${c.id}" data-name="${c.name}"
-                style="flex:1;padding:7px;border:1px solid rgba(255,0,51,0.35);border-radius:6px;background:transparent;
-                color:#ff0033;cursor:pointer;font-size:0.78rem;font-weight:600">Delete</button>
-            </div>
-          </div>`;
-      }
-      html += `</div>`;
+              <div>
+                <div style="display:flex;justify-content:space-between;font-size:0.75rem;opacity:0.5;margin-bottom:4px">
+                  <span>Capacity</span><span>${booked}/${cap}</span>
+                </div>
+                <div style="background:rgba(255,255,255,0.1);border-radius:4px;height:5px;overflow:hidden">
+                  <div style="width:${pct}%;height:100%;background:${barColor};border-radius:4px"></div>
+                </div>
+              </div>
+              <div style="display:flex;gap:6px;flex-wrap:wrap">
+                <button class="ac-roster-btn" data-id="${c.id}" data-name="${c.name}"
+                  style="flex:1;min-width:80px;padding:7px 4px;border:1px solid rgba(8,165,226,0.3);border-radius:6px;
+                  background:transparent;color:#0887e2;cursor:pointer;font-size:0.75rem;font-weight:600">
+                  👥 Roster (${booked})</button>
+                <button class="ac-edit-btn"
+                  data-id="${c.id}" data-name="${c.name}" data-day="${c.day}" data-time="${c.time}"
+                  data-trainer="${c.trainerId}" data-cap="${c.capacity || 20}" data-type="${c.type || "General"}"
+                  data-duration="${c.duration || ""}" data-location="${(c.location || "").replace(/"/g,"&quot;")}"
+                  data-ispublic="${c.isPublic !== false}"
+                  style="flex:1;min-width:60px;padding:7px 4px;border:none;border-radius:6px;
+                  background:linear-gradient(90deg,#0887e2,#006af5);color:#fff;cursor:pointer;
+                  font-size:0.75rem;font-weight:600">Edit</button>
+                <button class="ac-del-btn" data-id="${c.id}" data-name="${c.name}"
+                  style="flex:1;min-width:60px;padding:7px 4px;border:1px solid rgba(255,0,51,0.35);border-radius:6px;
+                  background:transparent;color:#ff0033;cursor:pointer;font-size:0.75rem;font-weight:600">Delete</button>
+              </div>
+            </div>`;
+          }).join("")}
+        </div></div>`;
     }
-    if (!html) html = `<div class="card" style="text-align:center;padding:40px;opacity:0.5">No classes created yet.</div>`;
+    if (!html) html = `<div class="card" style="text-align:center;padding:40px;opacity:0.5">No classes match the current filters.</div>`;
     return html;
   }
 
   const dayPills = ["All", ...activeDays].map(d =>
     `<button class="ac-day-pill" data-day="${d}"
-      style="padding:6px 16px;border-radius:20px;border:1px solid rgba(8,165,226,${d === "All" ? "0.5" : "0.2"});
+      style="padding:5px 14px;border-radius:16px;border:1px solid rgba(8,165,226,${d === "All" ? "0.5" : "0.2"});
       background:${d === "All" ? "rgba(8,135,226,0.15)" : "transparent"};color:inherit;cursor:pointer;
-      font-family:inherit;font-size:0.8rem;transition:0.2s;white-space:nowrap">${d}</button>`
+      font-family:inherit;font-size:0.78rem;transition:0.2s;white-space:nowrap">${d}</button>`
   ).join("");
 
+  const trainerFilter = `<select id="ac-filter-trainer" style="${inputStyle};min-width:150px">
+    <option value="">All Trainers</option>
+    ${trainers.map(t => `<option value="${t.id}">${t.name}</option>`).join("")}
+  </select>`;
+
+  const typeFilter = `<select id="ac-filter-type" style="${inputStyle};min-width:130px">
+    <option value="">All Types</option>
+    ${CLASS_TYPES.map(t => `<option value="${t}">${t}</option>`).join("")}
+  </select>`;
+
   panel.innerHTML = `
-    <h2 style="color:#0887e2;margin-bottom:20px">Manage Classes</h2>
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:20px">
+      <h2 style="color:#0887e2;margin:0">Manage Classes</h2>
+    </div>
 
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:24px">
       <div class="card" style="text-align:center;padding:16px;cursor:default">
@@ -6641,133 +8482,222 @@ async function _loadAdminClassesPanel() {
       </div>
       <div class="card" style="text-align:center;padding:16px;cursor:default">
         <div style="font-size:1.8rem;font-weight:700;color:#e96d25">${trainers.length}</div>
-        <div style="font-size:0.78rem;opacity:0.6;margin-top:2px">Trainers</div>
+        <div style="font-size:0.78rem;opacity:0.6;margin-top:2px">Active Trainers</div>
       </div>
       <div class="card" style="text-align:center;padding:16px;cursor:default">
         <div style="font-size:1.8rem;font-weight:700;color:#ff0033">${totalBooked}</div>
-        <div style="font-size:0.78rem;opacity:0.6;margin-top:2px">Total Bookings</div>
+        <div style="font-size:0.78rem;opacity:0.6;margin-top:2px">Total Enrolled</div>
       </div>
       <div class="card" style="text-align:center;padding:16px;cursor:default">
-        <div style="font-size:1.8rem;font-weight:700;color:#00c853">${totalCap - totalBooked}</div>
-        <div style="font-size:0.78rem;opacity:0.6;margin-top:2px">Open Spots</div>
+        <div style="font-size:1.8rem;font-weight:700;color:#00c853">${fillRate}%</div>
+        <div style="font-size:0.78rem;opacity:0.6;margin-top:2px">Fill Rate</div>
       </div>
     </div>
 
-    <div class="card" style="margin-bottom:24px;padding:20px">
-      <h3 style="margin-bottom:16px">Create New Class</h3>
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
-        <input id="ac-name" type="text" placeholder="Class Name"
-          style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-          background:rgba(255,255,255,0.05);color:inherit;font-family:inherit">
-        <select id="ac-day"
-          style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-          background:rgba(255,255,255,0.05);color:inherit;font-family:inherit">
-          ${dayOpts}
-        </select>
-        <input id="ac-time" type="time"
-          style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-          background:rgba(255,255,255,0.05);color:inherit;font-family:inherit">
+    <div class="card" style="margin-bottom:24px;overflow:hidden">
+      <div id="ac-form-toggle" style="padding:14px 20px;cursor:pointer;display:flex;align-items:center;
+        justify-content:space-between;border-bottom:1px solid rgba(255,255,255,0.06)">
+        <strong style="font-size:0.92rem">+ New Class</strong>
+        <span id="ac-form-arrow" style="opacity:0.5;transition:transform 0.2s">▼</span>
       </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
-        <select id="ac-trainer"
-          style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-          background:rgba(255,255,255,0.05);color:inherit;font-family:inherit">
-          <option value="">— Select Trainer —</option>
-          ${trainerOpts}
-        </select>
-        <input id="ac-capacity" type="number" min="1" placeholder="Capacity (e.g. 20)" value="20"
-          style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-          background:rgba(255,255,255,0.05);color:inherit;font-family:inherit">
+      <div id="ac-form-body" style="display:none;padding:20px">
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px">
+          <input id="ac-name" type="text" placeholder="Class Name" style="${inputStyle}">
+          <select id="ac-type" style="${inputStyle}"><option value="">— Type —</option>${typeOpts}</select>
+          <select id="ac-trainer" style="${inputStyle}"><option value="">— Trainer —</option>${trainerOpts}</select>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px;margin-bottom:12px">
+          <select id="ac-day" style="${inputStyle}">${dayOpts}</select>
+          <input id="ac-time" type="time" style="${inputStyle}">
+          <input id="ac-duration" type="number" min="15" max="180" placeholder="Duration (min)" value="60" style="${inputStyle}">
+          <input id="ac-capacity" type="number" min="1" placeholder="Capacity" value="20" style="${inputStyle}">
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+          <input id="ac-location" type="text" placeholder="Location (e.g. Studio A)" style="${inputStyle}">
+          <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:0.88rem;opacity:0.8">
+            <input id="ac-ispublic" type="checkbox" checked style="width:16px;height:16px;cursor:pointer">
+            Public class (visible to all clients)
+          </label>
+        </div>
+        <textarea id="ac-description" rows="2" placeholder="Short description (optional)"
+          style="${inputStyle};width:100%;resize:vertical;box-sizing:border-box;margin-bottom:12px"></textarea>
+        <button id="ac-create-btn" style="padding:10px 28px;border:none;border-radius:8px;
+          background:linear-gradient(90deg,#0887e2,#006af5);color:#fff;cursor:pointer;
+          font-family:inherit;font-weight:600;font-size:0.9rem">+ Create Class</button>
       </div>
-      <button id="ac-create-btn" style="margin-top:14px;padding:10px 28px;border:none;border-radius:8px;
-        background:linear-gradient(90deg,#0887e2,#006af5);color:#fff;cursor:pointer;
-        font-family:inherit;font-weight:600">+ Create Class</button>
     </div>
 
     <div class="card" style="padding:20px">
-      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:18px">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px">
         <h3 style="margin:0">Weekly Schedule</h3>
-        <div style="display:flex;flex-wrap:wrap;gap:8px">${dayPills}</div>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+          ${trainerFilter}
+          ${typeFilter}
+        </div>
       </div>
-      <div id="ac-schedule">${buildScheduleCards("All")}</div>
-    </div>
-  `;
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px">${dayPills}</div>
+      <div id="ac-schedule">${buildCards("All", "", "All Types")}</div>
+    </div>`;
 
-  // Day filter pills
+  // Toggle form
+  let formOpen = false;
+  document.getElementById("ac-form-toggle").addEventListener("click", () => {
+    formOpen = !formOpen;
+    document.getElementById("ac-form-body").style.display = formOpen ? "block" : "none";
+    document.getElementById("ac-form-arrow").style.transform = formOpen ? "rotate(180deg)" : "";
+  });
+
+  let activeDay = "All", activeTrainer = "", activeType = "All Types";
+
+  function refresh() {
+    document.getElementById("ac-schedule").innerHTML = buildCards(activeDay, activeTrainer, activeType);
+    bindAdminClassBtns();
+  }
+
   panel.querySelectorAll(".ac-day-pill").forEach(pill => {
     pill.addEventListener("click", () => {
-      const day = pill.dataset.day;
+      activeDay = pill.dataset.day;
       panel.querySelectorAll(".ac-day-pill").forEach(p => {
-        const on = p.dataset.day === day;
+        const on = p.dataset.day === activeDay;
         p.style.background = on ? "rgba(8,135,226,0.15)" : "transparent";
         p.style.borderColor = on ? "rgba(8,165,226,0.5)" : "rgba(8,165,226,0.2)";
       });
-      document.getElementById("ac-schedule").innerHTML = buildScheduleCards(day);
-      bindAdminClassBtns();
+      refresh();
     });
   });
 
+  document.getElementById("ac-filter-trainer").addEventListener("change", e => { activeTrainer = e.target.value; refresh(); });
+  document.getElementById("ac-filter-type").addEventListener("change", e => { activeType = e.target.value || "All Types"; refresh(); });
+
   function bindAdminClassBtns() {
+    // Roster buttons
+    panel.querySelectorAll(".ac-roster-btn").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const roster = await getClassRoster(btn.dataset.id);
+        const classId = btn.dataset.id;
+        let listHtml = "";
+        if (!roster.length) {
+          listHtml = `<p style="text-align:center;opacity:0.5;padding:20px">No clients enrolled yet.</p>`;
+        } else {
+          listHtml = `<table style="width:100%;border-collapse:collapse;font-size:0.88rem">
+            <thead><tr style="opacity:0.5;font-size:0.75rem">
+              <th style="text-align:left;padding:6px 8px">Client</th>
+              <th style="text-align:left;padding:6px 8px">Joined</th>
+              <th style="padding:6px 8px"></th>
+            </tr></thead>
+            <tbody>
+            ${roster.map(r => `<tr style="border-top:1px solid rgba(255,255,255,0.07)">
+              <td style="padding:8px">${r.clientName || "Unknown"}</td>
+              <td style="padding:8px;opacity:0.55;font-size:0.8rem">${r.joinedAt ? new Date(r.joinedAt).toLocaleDateString() : "—"}</td>
+              <td style="padding:8px;text-align:right">
+                <button class="ac-roster-remove" data-cid="${r.clientId}" data-bid="${r.bookingId || ""}"
+                  style="padding:4px 10px;border:1px solid rgba(255,0,51,0.4);border-radius:5px;background:transparent;
+                  color:#ff0033;cursor:pointer;font-size:0.75rem">Remove</button>
+              </td>
+            </tr>`).join("")}
+            </tbody></table>`;
+        }
+        showModal(`Roster — ${btn.dataset.name}`, listHtml);
+        setTimeout(() => {
+          document.querySelectorAll(".ac-roster-remove").forEach(rb => {
+            rb.addEventListener("click", async () => {
+              rb.disabled = true; rb.textContent = "…";
+              try {
+                await db.ref(`classes/${classId}/participants/${rb.dataset.cid}`).remove();
+                if (rb.dataset.bid) await db.ref(`bookings/${rb.dataset.bid}`).remove();
+                showToast("Client removed from class.", "success");
+                const overlay = document.getElementById("xgym-modal");
+                if (overlay) overlay.remove();
+                _loadAdminClassesPanel();
+              } catch(e) { showToast(e.message, "error"); rb.disabled = false; rb.textContent = "Remove"; }
+            });
+          });
+        }, 50);
+      });
+    });
+
     // Edit buttons
     panel.querySelectorAll(".ac-edit-btn").forEach(btn => {
       btn.addEventListener("click", () => {
         const id = btn.dataset.id;
-        const editHTML = `
-          <div style="display:grid;gap:12px;margin-top:10px">
-            <input id="ac-edit-name" value="${btn.dataset.name}" placeholder="Class Name"
-              style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-              background:rgba(255,255,255,0.05);color:inherit;font-family:inherit">
-            <select id="ac-edit-day"
-              style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-              background:rgba(255,255,255,0.05);color:inherit;font-family:inherit">
-              ${DAYS.map(d => `<option value="${d}" ${d === btn.dataset.day ? "selected" : ""}>${d}</option>`).join("")}
+        const editHTML = `<div style="display:grid;gap:10px;margin-top:10px">
+          <input id="ac-edit-name" value="${btn.dataset.name}" placeholder="Class Name" style="${inputStyle}">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <select id="ac-edit-type" style="${inputStyle}">
+              ${CLASS_TYPES.map(t => `<option value="${t}" ${t === btn.dataset.type ? "selected" : ""}>${t}</option>`).join("")}
             </select>
-            <input id="ac-edit-time" type="time" value="${btn.dataset.time}"
-              style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-              background:rgba(255,255,255,0.05);color:inherit;font-family:inherit">
-            <select id="ac-edit-trainer"
-              style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-              background:rgba(255,255,255,0.05);color:inherit;font-family:inherit">
+            <select id="ac-edit-trainer" style="${inputStyle}">
               ${trainers.map(t => `<option value="${t.id}" data-name="${t.name}" ${t.id === btn.dataset.trainer ? "selected" : ""}>${t.name}</option>`).join("")}
             </select>
-            <input id="ac-edit-cap" type="number" min="1" value="${btn.dataset.cap}"
-              style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-              background:rgba(255,255,255,0.05);color:inherit;font-family:inherit">
-          </div>`;
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px">
+            <select id="ac-edit-day" style="${inputStyle}">
+              ${DAYS.map(d => `<option value="${d}" ${d === btn.dataset.day ? "selected" : ""}>${d}</option>`).join("")}
+            </select>
+            <input id="ac-edit-time" type="time" value="${btn.dataset.time}" style="${inputStyle}">
+            <input id="ac-edit-duration" type="number" min="15" max="180" value="${btn.dataset.duration || 60}" placeholder="Duration (min)" style="${inputStyle}">
+            <input id="ac-edit-cap" type="number" min="1" value="${btn.dataset.cap}" style="${inputStyle}">
+          </div>
+          <input id="ac-edit-location" value="${btn.dataset.location || ""}" placeholder="Location" style="${inputStyle}">
+          <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:0.88rem;opacity:0.8">
+            <input id="ac-edit-ispublic" type="checkbox" ${btn.dataset.ispublic === "true" ? "checked" : ""} style="width:16px;height:16px">
+            Public class
+          </label>
+        </div>`;
         showModal("Edit Class", editHTML, async () => {
           const trSel = document.getElementById("ac-edit-trainer");
+          const newCap = parseInt(document.getElementById("ac-edit-cap").value) || 20;
+          const currentBooked = counts[id] || 0;
+          if (newCap < currentBooked) {
+            showToast(`Cannot set capacity below current enrollment (${currentBooked} booked).`, "error");
+            return;
+          }
+          const editIsPublic = document.getElementById("ac-edit-ispublic").checked;
           await updateClass(id, {
             name: document.getElementById("ac-edit-name").value.trim(),
+            type: document.getElementById("ac-edit-type").value,
             day: document.getElementById("ac-edit-day").value,
             time: document.getElementById("ac-edit-time").value,
+            duration: parseInt(document.getElementById("ac-edit-duration").value) || 60,
             trainerId: trSel.value,
-            trainerName: trSel.selectedOptions[0]?.dataset.name || "",
-            capacity: parseInt(document.getElementById("ac-edit-cap").value) || 20
+            trainerName: trSel.selectedOptions[0]?.dataset.name || trSel.selectedOptions[0]?.textContent || "",
+            capacity: newCap,
+            location: document.getElementById("ac-edit-location").value.trim(),
+            isPublic: editIsPublic,
+            source: editIsPublic ? "admin" : "trainer"
           });
           showToast("Class updated!", "success");
           _loadAdminClassesPanel();
         });
       });
     });
+
     // Delete buttons
     panel.querySelectorAll(".ac-del-btn").forEach(btn => {
       btn.addEventListener("click", () => {
-        showModal("Delete Class", `<p>Delete <strong>${btn.dataset.name}</strong>? All bookings will also be removed.</p>`, async () => {
-          await deleteClass(btn.dataset.id);
-          showToast("Class deleted.", "success");
-          _loadAdminClassesPanel();
-        });
+        showModal("Delete Class",
+          `<p>Delete <strong>${btn.dataset.name}</strong>? All bookings and enrollment data will be removed.</p>`,
+          async () => {
+            await deleteClass(btn.dataset.id);
+            showToast("Class deleted.", "success");
+            _loadAdminClassesPanel();
+          }
+        );
       });
     });
   }
 
   bindAdminClassBtns();
 
-  // Create class
   document.getElementById("ac-create-btn").addEventListener("click", async () => {
     const name = document.getElementById("ac-name").value.trim();
-    const day = document.getElementById("ac-day").value;
+    const type = document.getElementById("ac-type").value || "General";
+    const day  = document.getElementById("ac-day").value;
     const time = document.getElementById("ac-time").value;
+    const duration = parseInt(document.getElementById("ac-duration").value) || 60;
+    const location = document.getElementById("ac-location").value.trim();
+    const isPublic = document.getElementById("ac-ispublic").checked;
+    const description = document.getElementById("ac-description").value.trim();
     const trainerSel = document.getElementById("ac-trainer");
     const trainerId = trainerSel.value;
     const trainerName = trainerSel.selectedOptions[0]?.dataset.name || "";
@@ -6776,14 +8706,11 @@ async function _loadAdminClassesPanel() {
     if (!time) { showToast("Select a time.", "error"); return; }
     if (!trainerId) { showToast("Select a trainer.", "error"); return; }
     try {
-      await createClass(trainerId, trainerName, { name, day, time, capacity });
-      showToast("Class created!", "success");
+      await createClass(trainerId, trainerName, { name, type, day, time, duration, capacity, location, description, isPublic });
+      showToast("Class created! 🎉", "success");
       _loadAdminClassesPanel();
-    } catch (e) {
-      showToast(e.message, "error");
-    }
+    } catch(e) { showToast(e.message, "error"); }
   });
-
 }
 
 // ============================================================

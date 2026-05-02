@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -151,6 +151,52 @@ canvas.particle-layer {
     font-size: 1.1rem;
     width: 24px;
     text-align: center;
+}
+
+/* Notification Badge System */
+.notification-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 6px;
+    margin-left: auto;
+    background: linear-gradient(135deg, var(--fire), #ff6b47);
+    color: #fff;
+    font-size: 0.7rem;
+    font-weight: 700;
+    border-radius: 10px;
+    box-shadow: 0 0 12px rgba(233,109,37,0.6), 0 2px 4px rgba(0,0,0,0.3);
+    animation: notifPulse 2s ease-in-out infinite;
+    transition: all 0.3s ease;
+}
+
+.notification-badge.hidden {
+    display: none;
+}
+
+@keyframes notifPulse {
+    0%, 100% { transform: scale(1); box-shadow: 0 0 12px rgba(233,109,37,0.6); }
+    50% { transform: scale(1.1); box-shadow: 0 0 20px rgba(233,109,37,0.9); }
+}
+
+body.light .notification-badge {
+    background: linear-gradient(135deg, #ff2f45, #ff6b47);
+    box-shadow: 0 0 12px rgba(255,47,69,0.5), 0 2px 4px rgba(0,0,0,0.2);
+}
+
+.nav-item {
+    margin: 18px 0;
+    font-size: 0.95rem;
+    opacity: 0.6;
+    cursor: pointer;
+    transition: 0.3s;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    letter-spacing: 0.04em;
+    position: relative;
 }
 
 /* Main content */
@@ -329,6 +375,7 @@ body.light ::-webkit-scrollbar-thumb { background: rgba(255,47,69,0.35); }
 @media (max-width: 768px) {
         .content-header { flex-direction: column; align-items: flex-start; }
 }
+
 </style>
 </head>
 
@@ -356,6 +403,7 @@ body.light ::-webkit-scrollbar-thumb { background: rgba(255,47,69,0.35); }
     </div>
     <div class="nav-item" data-panel="panel-clients">
         <span class="nav-icon">&#x1F465;</span> Clients
+        <span class="notification-badge hidden" id="notif-clients">0</span>
     </div>
     <div class="nav-item" data-panel="panel-workout-builder">
         <span class="nav-icon"></span> Workout Builder
@@ -365,12 +413,14 @@ body.light ::-webkit-scrollbar-thumb { background: rgba(255,47,69,0.35); }
     </div>
     <div class="nav-item" data-panel="panel-classes">
         <span class="nav-icon"></span> My Classes
+        <span class="notification-badge hidden" id="notif-classes">0</span>
     </div>
     <div class="nav-item" data-panel="panel-membership">
         <span class="nav-icon"></span> Membership
     </div>
     <div class="nav-item" data-panel="panel-messenger">
         <span class="nav-icon"></span> Messenger
+        <span class="notification-badge hidden" id="notif-messenger">0</span>
     </div>
     <div class="nav-item" data-panel="panel-settings">
         <span class="nav-icon">⚙️</span> Settings
@@ -566,6 +616,70 @@ gsap.to("#content", {
         apply(isLight);
         localStorage.setItem("xgym-theme", isLight ? "light" : "dark");
     });
+})();
+
+/* ===================================
+   NOTIFICATION SYSTEM - TRAINER
+   =================================== */
+(function() {
+    const PANEL_MAP = {
+        'panel-messenger': 'messenger',
+        'panel-clients':   'clients',
+        'panel-classes':   'classes'
+    };
+
+    const NotificationManager = {
+        notifications: { messenger: 0, clients: 0, classes: 0 },
+
+        init() {
+            this.updateAllBadges();
+            this.setupPanelListeners();
+        },
+
+        addNotification(type, count) {
+            count = (count === undefined) ? 1 : count;
+            if (Object.prototype.hasOwnProperty.call(this.notifications, type)) {
+                this.notifications[type] += count;
+                this.updateBadge(type);
+            }
+        },
+
+        clearNotification(type) {
+            if (Object.prototype.hasOwnProperty.call(this.notifications, type)) {
+                this.notifications[type] = 0;
+                this.updateBadge(type);
+            }
+        },
+
+        updateBadge(type) {
+            const badge = document.getElementById('notif-' + type);
+            if (!badge) return;
+            const count = this.notifications[type];
+            badge.textContent = count > 99 ? '99+' : count;
+            badge.classList.toggle('hidden', count === 0);
+        },
+
+        updateAllBadges() {
+            Object.keys(this.notifications).forEach(t => this.updateBadge(t));
+        },
+
+        setupPanelListeners() {
+            document.querySelectorAll('.nav-item[data-panel]').forEach(navItem => {
+                navItem.addEventListener('click', () => {
+                    const type = PANEL_MAP[navItem.getAttribute('data-panel')];
+                    if (type) this.clearNotification(type);
+                });
+            });
+        }
+    };
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', () => NotificationManager.init());
+    } else {
+        NotificationManager.init();
+    }
+
+    window.XGymNotifications = NotificationManager;
 })();
 </script>
 
