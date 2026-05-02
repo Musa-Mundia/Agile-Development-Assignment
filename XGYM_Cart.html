@@ -1357,7 +1357,9 @@ function submitPayment() {
       } catch(e) {}
       /* Add to order history and persist to sessionStorage */
       try {
-        const newOrder = { ...txn, date: new Date().toISOString().split('T')[0], status: 'paid', items: cart.items.map(i => `${i.name} × ${i.quantity}`).join(', ') };
+        const itemsData = cart.items.map(i => ({ id: i.id, name: i.name, qty: i.quantity, price: parseFloat(i.price) || 0 }));
+        const newOrder = { ...txn, date: new Date().toISOString().split('T')[0], status: 'paid',
+          items: itemsData.map(i => `${i.name} × ${i.qty}`).join(', '), itemsData };
         ORDER_HISTORY.unshift(newOrder);
         if (currentUser) sessionStorage.setItem('xgym_pending_orders', JSON.stringify(ORDER_HISTORY.slice(0, 30)));
       } catch(e) {}
@@ -1403,7 +1405,9 @@ function submitPayment() {
       } catch(e) {}
       /* Add to order history and persist to sessionStorage */
       try {
-        const newOrder = { ...txn, date: new Date().toISOString().split('T')[0], status: 'paid', items: cart.items.map(i => `${i.name} × ${i.quantity}`).join(', ') };
+        const itemsData = cart.items.map(i => ({ id: i.id, name: i.name, qty: i.quantity, price: parseFloat(i.price) || 0 }));
+        const newOrder = { ...txn, date: new Date().toISOString().split('T')[0], status: 'paid',
+          items: itemsData.map(i => `${i.name} × ${i.qty}`).join(', '), itemsData };
         ORDER_HISTORY.unshift(newOrder);
         if (currentUser) sessionStorage.setItem('xgym_pending_orders', JSON.stringify(ORDER_HISTORY.slice(0, 30)));
       } catch(e) {}
