@@ -549,7 +549,9 @@ footer {
   <div class="nav-brand"><span>The</span> Gym</div>
 
   <div class="nav-right">
-    <a href="/login.html" class="btn-login">Sign in</a>
+    <a href="/login.html" class="btn-login" id="signInBtn">Sign in</a>
+    <span id="navUserName" style="display:none;font-size:0.85rem;opacity:0.8;margin-right:4px"></span>
+    <a id="backToDashBtn" href="javascript:history.back()" class="btn-login" style="display:none;color:var(--accent);border-color:var(--accent);">← Dashboard</a>
 
     <!-- Orders button (shown/hidden by JS depending on session state) -->
     <button class="btn-login" id="historyBtn" style="display:none; color:var(--accent); border-color:var(--accent);" onclick="openHistory()">My orders</button>
@@ -679,13 +681,13 @@ footer {
 
 /* PRODUCT DATA
    We can edit these later based on what we agree on*/
-const MEMBERSHIPS = [
-  { id: 'm1', name: 'Basic Membership',   category: 'Membership', price: 19.99, icon: '🏋️', desc: 'Full gym floor access, lockers, 6AM–10PM daily.' },
-  { id: 'm2', name: 'Pro Membership',     category: 'Membership', price: 34.99, icon: '⚡', desc: 'Everything in Basic plus group classes and 2 guest passes/month.' },
-  { id: 'm3', name: 'Premium Membership', category: 'Membership', price: 54.99, icon: '👑', desc: 'All-access — sauna, spa, 2 PT sessions/mo, 24/7 entry.' },
+/* Static fallbacks — used when the store is visited directly (no session) */
+const _DEFAULT_MEMBERSHIPS = [
+  { id: 'm1', name: 'Basic Membership',   category: 'Membership', price: 19.99, icon: '🏋️', desc: 'Full gym floor access, lockers, 6AM–10PM daily.',                             durationDays: 30, isMembership: true },
+  { id: 'm2', name: 'Pro Membership',     category: 'Membership', price: 34.99, icon: '⚡', desc: 'Everything in Basic plus group classes and 2 guest passes/month.',          durationDays: 30, isMembership: true },
+  { id: 'm3', name: 'Premium Membership', category: 'Membership', price: 54.99, icon: '👑', desc: 'All-access — sauna, spa, 2 PT sessions/mo, 24/7 entry.',                     durationDays: 30, isMembership: true },
 ];
-
-const SHOP_ITEMS = [
+const _DEFAULT_SHOP_ITEMS = [
   { id: 's1', name: 'Whey Protein 1kg',     category: 'Nutrition',   price: 29.99, icon: '🥛', desc: 'Premium whey blend, 25g protein per serving. Choc & vanilla.' },
   { id: 's2', name: 'Resistance Band Set',  category: 'Equipment',   price: 14.99, icon: '🔴', desc: '5-band progressive resistance kit with carry pouch.' },
   { id: 's3', name: 'XGYM Water Bottle',    category: 'Accessories', price: 12.99, icon: '💧', desc: '800ml stainless steel, insulated, leak-proof lid.' },
@@ -693,6 +695,29 @@ const SHOP_ITEMS = [
   { id: 's5', name: 'Shaker Bottle',        category: 'Nutrition',   price: 7.99,  icon: '🧴', desc: '700ml BPA-free shaker with blender ball.' },
   { id: 's6', name: 'Gym Bag',              category: 'Accessories', price: 34.99, icon: '🎒', desc: 'Waterproof 35L bag with wet/dry compartment.' },
 ];
+
+/* Normalise a Firebase membership_plan into the shape productCard() expects */
+function _normalizePlan(p) {
+  const icon = parseFloat(p.price) > 60 ? '👑' : parseFloat(p.price) > 35 ? '⚡' : '🏋️';
+  const desc = p.description || (Array.isArray(p.features) ? p.features.slice(0, 3).join(' · ') : '');
+  return { id: p.id, name: p.name, category: 'Membership', price: parseFloat(p.price) || 0, icon, desc, durationDays: p.durationDays || 30, isMembership: true };
+}
+/* Normalise a Firebase store_item into the shape productCard() expects */
+function _normalizeStoreItem(s) {
+  const catIcons = { Nutrition: '🥛', Equipment: '🔴', Accessories: '🎒', Clothing: '👕', Supplements: '💊' };
+  return { id: s.id, name: s.name, category: s.category || 'Gear', price: parseFloat(s.price) || 0, icon: catIcons[s.category] || '🛍️', desc: s.description || '', stock: s.stock };
+}
+
+/* Load from the session written by _openStore() — fall back to statics if absent */
+let MEMBERSHIPS, SHOP_ITEMS;
+try {
+  const rawPlans = sessionStorage.getItem('xgym_plans');
+  const rawItems = sessionStorage.getItem('xgym_store_items');
+  MEMBERSHIPS = rawPlans ? JSON.parse(rawPlans).map(_normalizePlan) : null;
+  SHOP_ITEMS  = rawItems ? JSON.parse(rawItems).map(_normalizeStoreItem) : null;
+} catch(e) {}
+if (!MEMBERSHIPS || !MEMBERSHIPS.length) MEMBERSHIPS = _DEFAULT_MEMBERSHIPS;
+if (!SHOP_ITEMS  || !SHOP_ITEMS.length)  SHOP_ITEMS  = _DEFAULT_SHOP_ITEMS;
 
 /* SESSION / AUTH STATE
    currentUser — set by the login page via sessionStorage/localStorage if needed.
@@ -709,19 +734,29 @@ try {
   const saved = sessionStorage.getItem('xgym_user');
   if (saved) {
     currentUser = JSON.parse(saved);
-    /* Show "My orders" button if session exists */
+    /* Show "My orders" + user name; hide sign-in link; show back button */
     document.getElementById('historyBtn').style.display = 'flex';
+    document.getElementById('signInBtn').style.display  = 'none';
+    const nameEl = document.getElementById('navUserName');
+    if (nameEl && currentUser.name) { nameEl.textContent = 'Hi, ' + currentUser.name; nameEl.style.display = 'inline'; }
+    document.getElementById('backToDashBtn').style.display = 'flex';
   }
 } catch(e) { /* silently ignore if sessionStorage unavailable */ }
 
-/* Demo order history — replace with a fetch() call to the backend API */
-const ORDER_HISTORY = [
+/* Demo order history — shown only when logged in with no real orders, or when browsing as a guest */
+const _DEMO_ORDER_HISTORY = [
   { id: 'ORD-0039', date: '2025-02-01', amount: 34.99, method: 'Visa •••• 4242',        status: 'paid',   items: 'Pro Membership × 1' },
   { id: 'ORD-0028', date: '2025-01-14', amount: 42.98, method: 'Mastercard •••• 7301',  status: 'paid',   items: 'Whey Protein × 1, Shaker Bottle × 1' },
   { id: 'ORD-0017', date: '2025-01-01', amount: 34.99, method: 'Direct Debit',          status: 'paid',   items: 'Pro Membership × 1' },
   { id: 'ORD-0011', date: '2024-12-12', amount: 14.99, method: 'Visa •••• 4242',        status: 'paid',   items: 'Resistance Band Set × 1' },
   { id: 'ORD-0005', date: '2024-12-01', amount: 34.99, method: 'Direct Debit',          status: 'failed', items: 'Pro Membership × 1' },
 ];
+/* Real order history from sessionStorage (written by this page on checkout, synced by dashboard) */
+let ORDER_HISTORY;
+try {
+  const savedOrders = sessionStorage.getItem('xgym_pending_orders');
+  ORDER_HISTORY = savedOrders ? JSON.parse(savedOrders) : (currentUser ? [] : _DEMO_ORDER_HISTORY);
+} catch(e) { ORDER_HISTORY = currentUser ? [] : _DEMO_ORDER_HISTORY; }
 
 /*  RENDER PRODUCTS
    Generates product card HTML from the data arrays above and injects it
@@ -736,15 +771,21 @@ function renderProducts() {
    The replace(/"/g,"'") converts double-quotes to single so they don't break the HTML attribute. */
 function productCard(p) {
   const itemJson = JSON.stringify(p).replace(/"/g, "'");
+  const priceLabel = p.isMembership
+    ? `£${parseFloat(p.price).toFixed(2)}<small>/mo</small>`
+    : `£${parseFloat(p.price).toFixed(2)}`;
+  const stockNote = (!p.isMembership && p.stock !== undefined && p.stock <= 5)
+    ? `<div style="color:#e6b800;font-size:0.75rem;margin-top:2px">Only ${p.stock} left</div>` : '';
   return `
   <div class="product-card">
     <div class="product-img-placeholder">${p.icon}</div>
     <div class="product-body">
       <span class="product-tag">${p.category}</span>
       <div class="product-name">${p.name}</div>
-      <div class="product-desc">${p.desc}</div>
+      <div class="product-desc">${p.desc || p.description || ''}</div>
+      ${stockNote}
       <div class="product-footer">
-        <div class="product-price">£${p.price.toFixed(2)}<small>/mo</small></div>
+        <div class="product-price">${priceLabel}</div>
         <button class="btn-add" id="add-${p.id}" onclick="cart.addItem(${itemJson})">Add</button>
       </div>
     </div>
@@ -1079,24 +1120,50 @@ function setPayMethod(m) {
 
 /*Card Payment Form */
 function renderCardForm() {
+  /* Check for saved cards from the dashboard session */
+  let savedCards = [];
+  try { const raw = sessionStorage.getItem('xgym_cards'); if (raw) savedCards = JSON.parse(raw); } catch(e) {}
+  const defaultCard = savedCards.find(c => c.isDefault) || savedCards[0] || null;
+  const prefillName = defaultCard?.cardHolder || currentUser?.name || '';
+
+  const savedSection = savedCards.length > 0 ? `
+    <div style="margin-bottom:14px;padding:12px 14px;border-radius:10px;border:1px solid rgba(8,165,226,0.3);background:rgba(8,165,226,0.06)">
+      <div style="font-size:0.8rem;opacity:0.65;margin-bottom:8px">Saved cards</div>
+      <div style="display:flex;flex-direction:column;gap:6px" id="savedCardsRadios">
+        ${savedCards.map(c => `
+          <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:0.88rem">
+            <input type="radio" name="savedCard" value="${c.id}" data-holder="${c.cardHolder}" data-number="${c.cardNumber}" data-expiry="${c.expiry}" ${c.isDefault ? 'checked' : ''} onchange="_xgym_fillSavedCard(this)">
+            ${c.cardHolder} — •••• ${c.last4 || (c.cardNumber||'').slice(-4)} &nbsp;<span style="opacity:0.6">(${c.expiry})</span>
+          </label>`).join('')}
+        <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:0.88rem">
+          <input type="radio" name="savedCard" value="new" onchange="_xgym_fillSavedCard(this)"> Enter a new card
+        </label>
+      </div>
+    </div>
+  ` : '';
+
   return `
+    ${savedSection}
     <div class="form-field">
       <label class="form-label">Card number</label>
       <input class="form-input" id="cardNum" placeholder="1234 5678 9012 3456" maxlength="19"
-        oninput="this.value=this.value.replace(/\\D/g,'').slice(0,16).replace(/(.{4})/g,'$1 ').trim()">
+        oninput="this.value=this.value.replace(/\\D/g,'').slice(0,16).replace(/(.{4})/g,'$1 ').trim()"
+        value="${defaultCard ? defaultCard.cardNumber.replace(/(.{4})/g,'$1 ').trim() : ''}">
       <div class="form-error" id="cardNumErr"></div>
     </div>
     <div class="form-field">
       <label class="form-label">Name on card</label>
       <input class="form-input" id="cardName" placeholder="ALEX JOHNSON"
-        oninput="this.value=this.value.toUpperCase()">
+        oninput="this.value=this.value.toUpperCase()"
+        value="${prefillName.toUpperCase()}">
       <div class="form-error" id="cardNameErr"></div>
     </div>
     <div class="form-row">
       <div class="form-field">
         <label class="form-label">Expiry date</label>
         <input class="form-input" id="cardExp" placeholder="MM/YY" maxlength="5"
-          oninput="formatExpiry(this)">
+          oninput="formatExpiry(this)"
+          value="${defaultCard?.expiry || ''}">
         <div class="form-error" id="cardExpErr"></div>
       </div>
       <div class="form-field">
@@ -1107,10 +1174,28 @@ function renderCardForm() {
       </div>
     </div>
     <label class="form-check">
-      <input type="checkbox" id="saveCard" checked>
+      <input type="checkbox" id="saveCard" ${!defaultCard ? 'checked' : ''}>
       Save card for future payments
     </label>
   `;
+}
+
+/* Fill card fields when a saved card radio is selected */
+function _xgym_fillSavedCard(radio) {
+  if (radio.value === 'new') {
+    document.getElementById('cardNum').value  = '';
+    document.getElementById('cardName').value = '';
+    document.getElementById('cardExp').value  = '';
+    document.getElementById('cardCvv').value  = '';
+    document.getElementById('saveCard').checked = true;
+    return;
+  }
+  const num = radio.dataset.number || '';
+  document.getElementById('cardNum').value  = num.replace(/(.{4})/g,'$1 ').trim();
+  document.getElementById('cardName').value = (radio.dataset.holder || '').toUpperCase();
+  document.getElementById('cardExp').value  = radio.dataset.expiry || '';
+  document.getElementById('cardCvv').value  = '';
+  document.getElementById('saveCard').checked = false;
 }
 
 /*  Direct Debit Form
@@ -1247,12 +1332,35 @@ function submitPayment() {
         amount: cart.total,
         method: `${cardBrand(num)} •••• ${num.slice(-4)}`
       };
-      /* Save to history then clear cart */
-      ORDER_HISTORY.unshift({
-        ...txn, date: new Date().toISOString().split('T')[0],
-        status: 'paid',
-        items:  cart.items.map(i => `${i.name} × ${i.quantity}`).join(', ')
-      });
+      /* Save card to sessionStorage for dashboard sync if requested */
+      if (document.getElementById('saveCard')?.checked) {
+        try {
+          sessionStorage.setItem('xgym_pending_card', JSON.stringify({
+            cardHolder: name, cardNumber: num,
+            last4: num.slice(-4), expiry: exp
+          }));
+        } catch(e) {}
+      }
+      /* Sync any membership items back to Firebase via the dashboard */
+      try {
+        const membershipItems = cart.items.filter(i => i.isMembership || i.category === 'Membership');
+        if (membershipItems.length > 0 && currentUser) {
+          sessionStorage.setItem('xgym_pending_memberships', JSON.stringify(
+            membershipItems.map(i => ({
+              planId: i.id, name: i.name, price: parseFloat(i.price) || 0,
+              durationDays: i.durationDays || 30,
+              paymentMethod: 'card',
+              maskedCard: `${cardBrand(num)} •••• ${num.slice(-4)}`
+            }))
+          ));
+        }
+      } catch(e) {}
+      /* Add to order history and persist to sessionStorage */
+      try {
+        const newOrder = { ...txn, date: new Date().toISOString().split('T')[0], status: 'paid', items: cart.items.map(i => `${i.name} × ${i.quantity}`).join(', ') };
+        ORDER_HISTORY.unshift(newOrder);
+        if (currentUser) sessionStorage.setItem('xgym_pending_orders', JSON.stringify(ORDER_HISTORY.slice(0, 30)));
+      } catch(e) {}
       cart.clearCart();
       renderCheckoutBody('success', txn);
     }, 1600);
@@ -1279,11 +1387,26 @@ function submitPayment() {
         amount: cart.total,
         method: 'Direct Debit'
       };
-      ORDER_HISTORY.unshift({
-        ...txn, date: new Date().toISOString().split('T')[0],
-        status: 'paid',
-        items:  cart.items.map(i => `${i.name} × ${i.quantity}`).join(', ')
-      });
+      /* Sync any membership items back to Firebase via the dashboard */
+      try {
+        const membershipItems = cart.items.filter(i => i.isMembership || i.category === 'Membership');
+        if (membershipItems.length > 0 && currentUser) {
+          sessionStorage.setItem('xgym_pending_memberships', JSON.stringify(
+            membershipItems.map(i => ({
+              planId: i.id, name: i.name, price: parseFloat(i.price) || 0,
+              durationDays: i.durationDays || 30,
+              paymentMethod: 'direct_debit',
+              maskedCard: ''
+            }))
+          ));
+        }
+      } catch(e) {}
+      /* Add to order history and persist to sessionStorage */
+      try {
+        const newOrder = { ...txn, date: new Date().toISOString().split('T')[0], status: 'paid', items: cart.items.map(i => `${i.name} × ${i.quantity}`).join(', ') };
+        ORDER_HISTORY.unshift(newOrder);
+        if (currentUser) sessionStorage.setItem('xgym_pending_orders', JSON.stringify(ORDER_HISTORY.slice(0, 30)));
+      } catch(e) {}
       cart.clearCart();
       renderCheckoutBody('success', txn);
     }, 1600);
