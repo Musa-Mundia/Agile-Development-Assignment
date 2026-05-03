@@ -4,10 +4,23 @@
 //          Client Features, Trainer Features, UI Utilities
 // ============================================================
 
+// 2nd May
+// feat(auth-flow): enable cross-page modal auth and cart session sync
+
+// - Added `_initAuthForms()` to the main `bootstrap()` function to ensure modal event listeners bind globally on all pages
+// - Intercepted the login success flow specifically for the cart page (`includes("cart")`) to manually set `sessionStorage` and trigger `location.reload()` instead of a hard redirect
+// - Intercepted the registration success flow identically for the cart page to maintain user context and unlock the checkout button seamlessly
+
+
+
+
 // ============================================================
 // SECTION 1: FIREBASE CONFIGURATION
 // ============================================================
 /// Create a Firebase Type Webapp and paste your configuration , warning dont use message ID
+
+
+
 const firebaseConfig = {
   apiKey: "AIzaSyDynE1tulBXI_ZBDqU9WjOHojRGVpuRodo",
   authDomain: "agile-development-gym.firebaseapp.com",
@@ -378,9 +391,9 @@ function addToCart(item) {
   const cart = getCart();
   const existing = cart.find(c => c.id === item.id);
   if (existing) {
-    existing.qty = (existing.qty || 1) + 1;
+    existing.qty = (existing.qty || existing.quantity || 1) + 1;
   } else {
-    cart.push({ ...item, qty: 1 });
+    cart.push({ ...item, quantity: 1 });
   }
   _saveCart(cart);
   _updateCartBadge();
@@ -405,7 +418,7 @@ function clearCart() {
 function _updateCartBadge() {
   const badge = document.getElementById("cart-badge");
   if (!badge) return;
-  const count = getCart().reduce((sum, c) => sum + (c.qty || 1), 0);
+  const count = getCart().reduce((sum, c) => sum + (c.qty || c.quantity || 1), 0);
   badge.textContent = count;
   badge.style.display = count > 0 ? "inline-block" : "none";
 }
@@ -2002,9 +2015,23 @@ function _initAuthForms() {
             console.error("[X-Gym] Emergency profile creation also failed:", epErr);
           }
         }
+        
+        // IF ON CART PAGE: Set session and reload instead of redirecting
+        if (window.location.pathname.toLowerCase().includes("cart")) {
+          sessionStorage.setItem("xgym_user", JSON.stringify({
+            uid: cred.user.uid,
+            name: profile ? profile.name : cred.user.email,
+            email: cred.user.email,
+            role: profile ? profile.role : "client"
+          }));
+          window.location.reload();
+          return;
+        }
+
         console.log("[X-Gym] Redirecting after login to:", target);
         _forceRedirect(target);
       } catch (err) {
+
         _authActionInProgress = false;
         console.error("[X-Gym] Login error:", err);
         if (authError) authError.textContent = err.message;
@@ -2032,16 +2059,30 @@ function _initAuthForms() {
       const role = TRAINER_EMAILS.some(e => e.toLowerCase() === emailVal.toLowerCase())
         ? "trainer" : "client";
 
-      try {
+try {
         registerBtn.disabled = true;
         registerBtn.textContent = "Registering…";
-        await registerUser(emailVal, passwordVal, nameVal, role);
+        const regData = await registerUser(emailVal, passwordVal, nameVal, role); // <-- Capture user data
         console.log("[X-Gym] Register done, role:", role, "— redirecting…");
+        
+        // IF ON CART PAGE: Set session and reload instead of redirecting
+        if (window.location.pathname.toLowerCase().includes("cart")) {
+          sessionStorage.setItem("xgym_user", JSON.stringify({
+            uid: regData.user.uid,
+            name: nameVal,
+            email: emailVal,
+            role: role
+          }));
+          window.location.reload();
+          return;
+        }
+
         const target = role === "trainer"
           ? "trainerdashboard.xx.html"
           : "DashboardClient.xxx.html";
         _forceRedirect(target);
       } catch (err) {
+
         _authActionInProgress = false;
         console.error("[X-Gym] Register error:", err);
         if (authError) authError.textContent = err.message;
@@ -3274,7 +3315,7 @@ async function _loadCartPanel(uid) {
 
   async function render() {
     const cart = getCart();
-    const total = cart.reduce((s, i) => s + i.price * i.qty, 0);
+    const total = cart.reduce((s, i) => s + (parseFloat(i.price) || 0) * (i.quantity || i.qty || 1), 0);
 
     panel.innerHTML = `
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:20px">
@@ -3288,8 +3329,8 @@ async function _loadCartPanel(uid) {
           ? `<p style="opacity:0.55">Your cart is empty. Browse the store below to add items.</p>`
           : cart.map(item => `
             <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.07)">
-              <div style="flex:1"><strong>${item.name}</strong><span style="opacity:0.6;font-size:0.82rem;margin-left:8px">× ${item.qty}</span></div>
-              <strong style="color:#e96d25">£${(item.price * item.qty).toFixed(2)}</strong>
+              <div style="flex:1"><strong>${item.name}</strong><span style="opacity:0.6;font-size:0.82rem;margin-left:8px">× ${item.quantity || item.qty || 1}</span></div>
+              <strong style="color:#e96d25">£${((parseFloat(item.price) || 0) * (item.quantity || item.qty || 1)).toFixed(2)}</strong>
               <button class="cart-remove-btn" data-id="${item.id}" style="padding:4px 10px;border:1px solid rgba(255,0,51,0.4);border-radius:6px;background:transparent;color:#ff5577;cursor:pointer;font-size:0.75rem">✕</button>
             </div>`).join("")
         }
@@ -7754,6 +7795,7 @@ function _startAdminNotifListeners() {
 }
 
 (function bootstrap() {
+  _initAuthForms();
   const page = detectPage();
   if (page === "index")   initIndexPage();
   if (page === "client")  initClientPage();

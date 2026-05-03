@@ -1,3 +1,40 @@
+<!-- 
+ feat(shop-ui): add image support for products and fix rendering logic
+ Replaced emoji-only icon usage with support for image file paths in product data
+ Updated productCard() to conditionally render <img> tags for image icons and fallback to emoji placeholders
+ Fixed issue where icon field was always rendered as text instead of a visual asset
+ Added link to home page in cart logo
+ Improved separation of concerns between data (product arrays) and UI rendering logic 
+ 
+ 
+ feat(cart-ui): integrate native auth modal and Firebase scripts
+
+ Replaced external `/login.html` redirect in the navbar with a native modal trigger 
+Injected `#auth-overlay` modal HTML structure before the closing body tag
+Imported Firebase compat SDKs and `BackendMain.js` to enable backend functionality
+ Updated checkout button logic to trigger the auth modal and close the cart panel instead of redirecting unauthenticated users
+ 
+ 2nd May- 26
+ -->
+
+ <!-- for Xgym_cart and Backend.js
+ Auth Modal Integration & Cross-Page Support
+
+Ported the sleek, floating authentication modal directly into the main XGYM_Cart.html file, complete with the necessary Firebase backend scripts.
+
+Updated the global bootstrap() function in BackendMain.js to ensure the modal's event listeners automatically initialize on any page that includes the modal HTML.
+
+Rewired the Cart's "Checkout" button and "Sign In" navbar link to instantly pop open the new auth modal instead of forcing a jarring redirect to a separate login page.
+
+Intercepted the login and registration success flows within BackendMain.js. Now, if a user logs in from the Cart, the system silently sets their session data and reloads the page in place, seamlessly unlocking the checkout process.
+
+Hardcoded the Cart page to strictly rely on the local _DEFAULT_MEMBERSHIPS and _DEFAULT_SHOP_ITEMS arrays. This severs the connection to the text-only Firebase data and guarantees the beautiful, image-rich product cards render perfectly 100% of the time.
+
+Squashed a critical math bug causing £NaN totals by updating the backend's cart functions (_loadCartPanel, addToCart) to accept both quantity and qty data universally.
+
+Updated the Cart's session listener to successfully find and hide the newly renamed nav-login-link once a user logs in.
+3rd May -->
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -546,13 +583,15 @@ footer {
 <!--NAVIGATION-->
 <nav class="nav">
   <!-- Brand: "The" is highlighted in blue, "Gym" follows -->
-  <div class="nav-brand"><span>The</span> Gym</div>
+   <a href="index.html" class="nav-brand"><span>The</span> Gym</a>
+
 
   <div class="nav-right">
-    <a href="/login.html" class="btn-login" id="signInBtn">Sign in</a>
+    <a href="#" class="btn-login" id="nav-login-link" onclick="document.getElementById('auth-overlay').style.display='flex'">Sign in</a>
     <span id="navUserName" style="display:none;font-size:0.85rem;opacity:0.8;margin-right:4px"></span>
-    <a id="backToDashBtn" href="javascript:history.back()" class="btn-login" style="display:none;color:var(--accent);border-color:var(--accent);">← Dashboard</a>
+    <a id="backToDashBtn" href="DashboardClient.xxx.html" class="btn-login" style="display:none;color:var(--accent);border-color:var(--accent);">← Dashboard</a>
 
+    
     <!-- Orders button (shown/hidden by JS depending on session state) -->
     <button class="btn-login" id="historyBtn" style="display:none; color:var(--accent); border-color:var(--accent);" onclick="openHistory()">My orders</button>
 
@@ -664,6 +703,73 @@ footer {
 
 <footer>© 2025 The Gym Birmingham · All rights reserved</footer>
 
+<div id="auth-overlay" style="
+  display:none; position:fixed; inset:0;
+  background:rgba(0,13,20,0.85); backdrop-filter:blur(12px);
+  z-index:10000; align-items:center; justify-content:center;">
+
+  <div style="
+    background:rgba(0,18,32,0.95); border:1px solid rgba(8,165,226,0.2);
+    border-radius:16px; padding:40px; max-width:420px; width:90%;
+    color:#f1f9fe; font-family:'Exo 2',sans-serif;
+    box-shadow:0 0 60px rgba(8,165,226,0.25);">
+
+    <div id="login-form">
+      <h2 style="margin:0 0 24px;color:#08a5e2;font-size:1.6rem;font-family:'Orbitron',monospace;letter-spacing:0.1em">Login</h2>
+      <input id="login-email" type="email" placeholder="Email"
+        style="width:100%;padding:12px;margin-bottom:14px;border-radius:8px;
+               border:1px solid rgba(8,165,226,0.2);background:rgba(0,13,20,0.6);
+               color:#f1f9fe;font-family:'Exo 2',sans-serif;box-sizing:border-box">
+      <input id="login-password" type="password" placeholder="Password"
+        style="width:100%;padding:12px;margin-bottom:18px;border-radius:8px;
+               border:1px solid rgba(8,165,226,0.2);background:rgba(0,13,20,0.6);
+               color:#f1f9fe;font-family:'Exo 2',sans-serif;box-sizing:border-box">
+      <button id="login-btn" style="
+        width:100%;padding:14px;border:none;border-radius:8px;
+        background:linear-gradient(135deg,#006af5,#08a5e2);color:#f1f9fe;
+        font-size:1rem;cursor:pointer;font-family:'Orbitron',monospace;letter-spacing:0.1em;
+        box-shadow:0 0 20px rgba(8,165,226,0.3)">Login</button>
+      <p style="margin-top:16px;font-size:0.9rem;opacity:0.5;text-align:center">
+        Don't have an account?
+        <span id="show-register-btn" style="color:#08a5e2;cursor:pointer;text-decoration:underline">Register</span>
+      </p>
+    </div>
+
+    <div id="register-form" style="display:none">
+      <h2 style="margin:0 0 24px;color:#08a5e2;font-size:1.6rem;font-family:'Orbitron',monospace;letter-spacing:0.1em">Register</h2>
+      <input id="register-name" type="text" placeholder="Full Name"
+        style="width:100%;padding:12px;margin-bottom:14px;border-radius:8px;
+               border:1px solid rgba(8,165,226,0.2);background:rgba(0,13,20,0.6);
+               color:#f1f9fe;font-family:'Exo 2',sans-serif;box-sizing:border-box">
+      <input id="register-email" type="email" placeholder="Email"
+        style="width:100%;padding:12px;margin-bottom:14px;border-radius:8px;
+               border:1px solid rgba(8,165,226,0.2);background:rgba(0,13,20,0.6);
+               color:#f1f9fe;font-family:'Exo 2',sans-serif;box-sizing:border-box">
+      <input id="register-password" type="password" placeholder="Password"
+        style="width:100%;padding:12px;margin-bottom:14px;border-radius:8px;
+               border:1px solid rgba(8,165,226,0.2);background:rgba(0,13,20,0.6);
+               color:#f1f9fe;font-family:'Exo 2',sans-serif;box-sizing:border-box">
+      <button id="register-btn" style="
+        width:100%;padding:14px;border:none;border-radius:8px;
+        background:linear-gradient(135deg,#006af5,#08a5e2);color:#f1f9fe;
+        font-size:1rem;cursor:pointer;font-family:'Orbitron',monospace;letter-spacing:0.1em;
+        box-shadow:0 0 20px rgba(8,165,226,0.3)">Register</button>
+      <p style="margin-top:16px;font-size:0.9rem;opacity:0.5;text-align:center">
+        Already have an account?
+        <span id="show-login-btn" style="color:#08a5e2;cursor:pointer;text-decoration:underline">Login</span>
+      </p>
+    </div>
+
+    <p id="auth-error" style="color:#e96d25;margin-top:12px;font-size:0.9rem;text-align:center"></p>
+  </div>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
+
+<script src="BackendMain.js"></script>
+
 <!--
      JAVASCRIPT
      Sections (in order):
@@ -680,51 +786,57 @@ footer {
 <script>
 
 /* PRODUCT DATA
+
    We can edit these later based on what we agree on*/
 /* Static fallbacks — used when the store is visited directly (no session) */
 const _DEFAULT_MEMBERSHIPS = [
-  { id: 'm1', name: 'Basic Membership',   category: 'Membership', price: 19.99, icon: '🏋️', desc: 'Full gym floor access, lockers, 6AM–10PM daily.',                             durationDays: 30, isMembership: true },
-  { id: 'm2', name: 'Pro Membership',     category: 'Membership', price: 34.99, icon: '⚡', desc: 'Everything in Basic plus group classes and 2 guest passes/month.',          durationDays: 30, isMembership: true },
-  { id: 'm3', name: 'Premium Membership', category: 'Membership', price: 54.99, icon: '👑', desc: 'All-access — sauna, spa, 2 PT sessions/mo, 24/7 entry.',                     durationDays: 30, isMembership: true },
+  { id: 'm1', name: 'Basic Membership',   category: 'Membership', price: 19.99, icon: 'images/john-arano-h4i9G-de7Po-unsplash.jpg', desc: 'Full gym floor access, lockers, 10AM–6PM daily.',                             durationDays: 30, isMembership: true },
+  { id: 'm2', name: 'Pro Membership',     category: 'Membership', price: 24.99, icon: 'images/john-fornander-TAZoUmDqzXk-unsplash.jpg', desc: 'Everything in Basic plus group classes and 2 guest passes/month.',          durationDays: 30, isMembership: true },
+  { id: 'm3', name: 'Premium Membership', category: 'Membership', price: 39.99, icon: 'images/jonathan-borba-R0y_bEUjiOM-unsplash.jpg', desc: 'All-access — sauna, spa, 2 PT sessions/mo, 24/7 entry.',                     durationDays: 30, isMembership: true },
 ];
 const _DEFAULT_SHOP_ITEMS = [
-  { id: 's1', name: 'Whey Protein 1kg',     category: 'Nutrition',   price: 29.99, icon: '🥛', desc: 'Premium whey blend, 25g protein per serving. Choc & vanilla.' },
-  { id: 's2', name: 'Resistance Band Set',  category: 'Equipment',   price: 14.99, icon: '🔴', desc: '5-band progressive resistance kit with carry pouch.' },
-  { id: 's3', name: 'XGYM Water Bottle',    category: 'Accessories', price: 12.99, icon: '💧', desc: '800ml stainless steel, insulated, leak-proof lid.' },
-  { id: 's4', name: 'Gym Gloves',           category: 'Accessories', price: 9.99,  icon: '🥊', desc: 'Full-palm protection with wrist wrap support.' },
-  { id: 's5', name: 'Shaker Bottle',        category: 'Nutrition',   price: 7.99,  icon: '🧴', desc: '700ml BPA-free shaker with blender ball.' },
-  { id: 's6', name: 'Gym Bag',              category: 'Accessories', price: 34.99, icon: '🎒', desc: 'Waterproof 35L bag with wet/dry compartment.' },
+  { id: 's1', name: 'Whey Protein 1kg',     category: 'Nutrition',   price: 29.99, icon: 'images/alex-saks-4CzpHxVzTFA-unsplash.jpg', desc: 'Premium whey blend, 25g protein per serving. Choc & vanilla.' },
+  { id: 's2', name: 'Resistance Band Set',  category: 'Equipment',   price: 14.99, icon: 'images/delaney-van-Mzu7qcmP5tk-unsplash.jpg', desc: '5-band progressive resistance kit with carry pouch.' },
+  { id: 's3', name: 'XGYM Water Bottle',    category: 'Accessories', price: 12.99, icon: 'images/joan-tran-reEySFadyJQ-unsplash.jpg', desc: '800ml stainless steel, insulated, leak-proof lid.' },
+  { id: 's4', name: 'Gym Gloves',           category: 'Accessories', price: 9.99,  icon: 'images/alexander-mils-CYyoMFLljJo-unsplash.jpg', desc: 'Full-palm protection with wrist wrap support.' },
+  { id: 's5', name: 'Shaker Bottle',        category: 'Nutrition',   price: 7.99,  icon: 'images/eastman-childs-aVuX_kXlJGo-unsplash.jpg', desc: '700ml BPA-free shaker with blender ball.' },
+  { id: 's6', name: 'Gym Bag',              category: 'Accessories', price: 34.99, icon: 'images/tree-of-life-seeds-WogVejBX8q0-unsplash.jpg', desc: 'Waterproof 35L bag with wet/dry compartment.' },
 ];
 
-/* Normalise a Firebase membership_plan into the shape productCard() expects */
-function _normalizePlan(p) {
-  const icon = parseFloat(p.price) > 60 ? '👑' : parseFloat(p.price) > 35 ? '⚡' : '🏋️';
-  const desc = p.description || (Array.isArray(p.features) ? p.features.slice(0, 3).join(' · ') : '');
-  return { id: p.id, name: p.name, category: 'Membership', price: parseFloat(p.price) || 0, icon, desc, durationDays: p.durationDays || 30, isMembership: true };
-}
-/* Normalise a Firebase store_item into the shape productCard() expects */
-function _normalizeStoreItem(s) {
-  const catIcons = { Nutrition: '🥛', Equipment: '🔴', Accessories: '🎒', Clothing: '👕', Supplements: '💊' };
-  return { id: s.id, name: s.name, category: s.category || 'Gear', price: parseFloat(s.price) || 0, icon: catIcons[s.category] || '🛍️', desc: s.description || '', stock: s.stock };
-}
+
+// *** READ COMMENT ON LINE 816 ***
+
+// /* Normalise a Firebase membership_plan into the shape productCard() expects */
+// function _normalizePlan(p) {
+//   const icon = parseFloat(p.price) > 60 ? '👑' : parseFloat(p.price) > 35 ? '⚡' : '🏋️';
+//   const desc = p.description || (Array.isArray(p.features) ? p.features.slice(0, 3).join(' · ') : '');
+//   return { id: p.id, name: p.name, category: 'Membership', price: parseFloat(p.price) || 0, icon, desc, durationDays: p.durationDays || 30, isMembership: true };
+// }
+// /* Normalise a Firebase store_item into the shape productCard() expects */
+// function _normalizeStoreItem(s) {
+//   const catIcons = { Nutrition: '🥛', Equipment: '🔴', Accessories: '🎒', Clothing: '👕', Supplements: '💊' };
+//   return { id: s.id, name: s.name, category: s.category || 'Gear', price: parseFloat(s.price) || 0, icon: catIcons[s.category] || '🛍️', desc: s.description || '', stock: s.stock };
+// }
 
 /* Load from the session written by _openStore() — fall back to statics if absent */
-let MEMBERSHIPS, SHOP_ITEMS;
-try {
-  const rawPlans = sessionStorage.getItem('xgym_plans');
-  const rawItems = sessionStorage.getItem('xgym_store_items');
-  MEMBERSHIPS = rawPlans ? JSON.parse(rawPlans).map(_normalizePlan) : null;
-  SHOP_ITEMS  = rawItems ? JSON.parse(rawItems).map(_normalizeStoreItem) : null;
-} catch(e) {}
-if (!MEMBERSHIPS || !MEMBERSHIPS.length) MEMBERSHIPS = _DEFAULT_MEMBERSHIPS;
-if (!SHOP_ITEMS  || !SHOP_ITEMS.length)  SHOP_ITEMS  = _DEFAULT_SHOP_ITEMS;
+// let MEMBERSHIPS, SHOP_ITEMS;
+// try {
+//   const rawPlans = sessionStorage.getItem('xgym_plans');
+//   const rawItems = sessionStorage.getItem('xgym_store_items');
+//   MEMBERSHIPS = rawPlans ? JSON.parse(rawPlans).map(_normalizePlan) : null;
+//   SHOP_ITEMS  = rawItems ? JSON.parse(rawItems).map(_normalizeStoreItem) : null;
+// } catch(e) {}
+// if (!MEMBERSHIPS || !MEMBERSHIPS.length) MEMBERSHIPS = _DEFAULT_MEMBERSHIPS;
+// if (!SHOP_ITEMS  || !SHOP_ITEMS.length)  SHOP_ITEMS  = _DEFAULT_SHOP_ITEMS;
 
-/* SESSION / AUTH STATE
-   currentUser — set by the login page via sessionStorage/localStorage if needed.
-   sessionStorage is checked  for a saved user object so the "My orders" button
-   appears automatically if the user is already logged in.
+// ****KEY READ COMMENT BELOW***
 
-   ORDER_HISTORY — pre-seeded demo data. In production, fetch this from the API.*/
+//  The code block above was preventing the catalogue from displaying after the user had logged in, because it was trying to load the text-only data from the database.
+
+/* Force the Cart to ALWAYS use the default UI structure and images */
+let MEMBERSHIPS = _DEFAULT_MEMBERSHIPS;
+let SHOP_ITEMS  = _DEFAULT_SHOP_ITEMS;
+
 
 /* Try to restore session from existing login system.
    login page should store the user as JSON in sessionStorage under 'xgym_user'.
@@ -736,12 +848,18 @@ try {
     currentUser = JSON.parse(saved);
     /* Show "My orders" + user name; hide sign-in link; show back button */
     document.getElementById('historyBtn').style.display = 'flex';
-    document.getElementById('signInBtn').style.display  = 'none';
+    
+    // Updated to match our new button ID!
+    const loginLink = document.getElementById('nav-login-link');
+    if (loginLink) loginLink.style.display = 'none'; 
+    
     const nameEl = document.getElementById('navUserName');
     if (nameEl && currentUser.name) { nameEl.textContent = 'Hi, ' + currentUser.name; nameEl.style.display = 'inline'; }
     document.getElementById('backToDashBtn').style.display = 'flex';
   }
-} catch(e) { /* silently ignore if sessionStorage unavailable */ }
+} catch(e) { 
+  console.error("Session load error:", e); 
+}
 
 /* Demo order history — shown only when logged in with no real orders, or when browsing as a guest */
 const _DEMO_ORDER_HISTORY = [
@@ -771,6 +889,15 @@ function renderProducts() {
    The replace(/"/g,"'") converts double-quotes to single so they don't break the HTML attribute. */
 function productCard(p) {
   const itemJson = JSON.stringify(p).replace(/"/g, "'");
+
+    const isImage = p.icon && !p.icon.startsWith('http') && !p.icon.includes('images/')
+    ? false
+    : p.icon && p.icon.includes('/');
+
+  const imageContent = isImage
+    ? `<img src="${p.icon}" class="product-img" alt="${p.name}">`
+    : `<div class="product-img-placeholder">${p.icon}</div>`;
+    
   const priceLabel = p.isMembership
     ? `£${parseFloat(p.price).toFixed(2)}<small>/mo</small>`
     : `£${parseFloat(p.price).toFixed(2)}`;
@@ -778,7 +905,7 @@ function productCard(p) {
     ? `<div style="color:#e6b800;font-size:0.75rem;margin-top:2px">Only ${p.stock} left</div>` : '';
   return `
   <div class="product-card">
-    <div class="product-img-placeholder">${p.icon}</div>
+    ${imageContent}
     <div class="product-body">
       <span class="product-tag">${p.category}</span>
       <div class="product-name">${p.name}</div>
@@ -807,6 +934,7 @@ function productCard(p) {
      IDs are always coerced to strings before comparison.
      Previously, numeric IDs (e.g. 1) vs string IDs ("1") would fail ===
      comparison, causing duplicate entries instead of quantity increments. */
+
 class ShoppingCart {
   constructor() {
     this.items = [];   /* Array of { id, name, price, quantity, icon, ... } */
@@ -940,9 +1068,16 @@ class ShoppingCart {
       /* Render each cart item row */
       container.innerHTML = this.items.map(item => {
         const lineTotal = (parseFloat(item.price) * item.quantity).toFixed(2);
+        const isImage = item.icon && item.icon.includes('/');
+
         return `
         <div class="cart-item" data-id="${item.id}">
-          <div class="cart-item-img-placeholder">${item.icon || '📦'}</div>
+    
+            ${item.icon && item.icon.includes('/') 
+              ? `<img src="${item.icon}" style="width:50px;height:50px;object-fit:cover;border-radius:8px;">`
+              : `<div class="cart-item-img-placeholder">${item.icon || '📦'}</div>`
+            }
+
           <div class="cart-item-details">
             <h4>${item.name}</h4>
             <p>£${parseFloat(item.price).toFixed(2)} each</p>
@@ -1018,7 +1153,8 @@ class ShoppingCart {
       /* If no active session, send to login page.
          */
       if (!currentUser) {
-        window.location.href = '/login.html?redirect=shop';
+        document.getElementById('auth-overlay').style.display = 'flex';
+        toggleCart(); /* Optional: slides the cart away so they can focus on logging in */
         return;
       }
       openCheckout();
