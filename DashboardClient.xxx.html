@@ -678,7 +678,8 @@ async function loadClientHomeData(uid,email){
     var trainersPromise=typeof getTrainersForSelection==='function'?getTrainersForSelection().catch(function(){return [];}):Promise.resolve([]);
     var purchasesPromise=typeof getClientStorePurchases==='function'?getClientStorePurchases(uid).catch(function(){return [];}):Promise.resolve([]);
     var paymentsPromise=typeof getClientMembershipPayments==='function'?getClientMembershipPayments(uid).catch(function(){return [];}):Promise.resolve([]);
-    var bundle=await Promise.all([profilePromise,membershipPromise,bookingsPromise,weeklyPromise,sessionsPromise,linkedPromise,trainersPromise,purchasesPromise,paymentsPromise]);
+    var gymClassesPromise=typeof getClasses==='function'?getClasses().catch(function(){return [];}):Promise.resolve([]);
+    var bundle=await Promise.all([profilePromise,membershipPromise,bookingsPromise,weeklyPromise,sessionsPromise,linkedPromise,trainersPromise,purchasesPromise,paymentsPromise,gymClassesPromise]);
     var profile=bundle[0]||{};
     var membership=bundle[1]||null;
     var bookings=bundle[2]||[];
@@ -688,12 +689,19 @@ async function loadClientHomeData(uid,email){
     var trainers=bundle[6]||[];
     var purchases=bundle[7]||[];
     var payments=bundle[8]||[];
+    var allGymClasses=bundle[9]||[];
     var timeline=(bookings||[]).map(function(booking){return {booking:booking,when:parseClientClassDate(booking.day,booking.time)};}).sort(function(a,b){
       var left=a.when&&a.when.getTime?a.when.getTime():Number.MAX_SAFE_INTEGER;
       var right=b.when&&b.when.getTime?b.when.getTime():Number.MAX_SAFE_INTEGER;
       return left-right;
     });
-    var nextBooking=timeline[0]||null;
+    var bookedClassIds=(bookings||[]).map(function(b){return b.classId;});
+    var availClasses=(allGymClasses||[]).filter(function(c){return c.isPublic!==false&&bookedClassIds.indexOf(c.id)===-1;}).map(function(c){return {booking:{className:c.name,day:c.day,time:c.time,trainerName:c.trainerName||'',classId:c.id,_isAvailable:true},when:parseClientClassDate(c.day,c.time)};}).sort(function(a,b){
+      var left=a.when&&a.when.getTime?a.when.getTime():Number.MAX_SAFE_INTEGER;
+      var right=b.when&&b.when.getTime?b.when.getTime():Number.MAX_SAFE_INTEGER;
+      return left-right;
+    });
+    var nextBooking=timeline[0]||(availClasses[0]||null);
     var emailName=String(email||'').split('@')[0]||'';
     var displayName=profile.name||profile.displayName||emailName||'Athlete';
     var membershipName=(function(p,m){
@@ -743,7 +751,7 @@ async function loadClientHomeData(uid,email){
     if(headerGreeting)headerGreeting.textContent=displayName;
     if(greetingStat)greetingStat.textContent=weekly.workoutsThisWeek+' workout'+(weekly.workoutsThisWeek===1?'':'s')+' this week · '+linkedIds.length+' trainer'+(linkedIds.length===1?'':'s')+' linked';
     if(overviewSub)overviewSub.textContent=bookings.length+' booked class'+(bookings.length===1?'':'es')+' · '+sessions.length+' logged session'+(sessions.length===1?'':'s');
-    if(quote)quote.textContent=nextBooking&&nextBooking.booking?'Next up: '+(nextBooking.booking.className||'Booked class')+' on '+formatClientDayTime(nextBooking.booking.day,nextBooking.booking.time)+'.':'No class booked yet. Open booking to reserve your next session.';
+    if(quote)quote.textContent=nextBooking&&nextBooking.booking?(nextBooking.booking._isAvailable?'Available: '+(nextBooking.booking.className||'Class')+' on '+formatClientDayTime(nextBooking.booking.day,nextBooking.booking.time)+'. Book it now!':'Next up: '+(nextBooking.booking.className||'Booked class')+' on '+formatClientDayTime(nextBooking.booking.day,nextBooking.booking.time)+'.'):'No class booked yet. Open booking to reserve your next session.';
     if(profileName)profileName.textContent=displayName;
     if(profileTag)profileTag.textContent='CLIENT';
     if(profileMeta)profileMeta.innerHTML='Linked Trainers: '+linkedIds.length;
@@ -764,7 +772,7 @@ async function loadClientHomeData(uid,email){
     var statTier=document.getElementById('stat-tier');
     var statTierSub=document.getElementById('stat-tier-sub');
     if(statNext)statNext.textContent=nextBooking&&nextBooking.when?formatClientCountdown(nextBooking.when):'None';
-    if(statNextSub)statNextSub.textContent=nextBooking&&nextBooking.booking?formatClientDayTime(nextBooking.booking.day,nextBooking.booking.time):'Book your next class';
+    if(statNextSub)statNextSub.textContent=nextBooking&&nextBooking.booking?formatClientDayTime(nextBooking.booking.day,nextBooking.booking.time)+(nextBooking.booking._isAvailable?' (available)':''):'Book your next class';
     if(statDone)statDone.textContent=String(weekly.totalSessions||0);
     if(statDoneSub)statDoneSub.textContent=(weekly.workoutsThisWeek||0)+' this week · '+Math.round((weekly.totalVolume||0)/100)/10+'k volume';
     if(statStreak)statStreak.textContent=String(weekly.streak||0);
@@ -801,7 +809,7 @@ async function loadClientHomeData(uid,email){
     var eventSub=document.getElementById('client-event-sub');
     var eventFeed=document.getElementById('client-event-feed');
     if(nextBooking&&nextBooking.booking){
-      if(eventEye)eventEye.textContent='Next booking';
+      if(eventEye)eventEye.textContent=nextBooking.booking._isAvailable?'Available class':'Next booking';
       if(eventTitle)eventTitle.textContent=nextBooking.booking.className||'Booked class';
       if(eventSub)eventSub.textContent=formatClientDayTime(nextBooking.booking.day,nextBooking.booking.time)+(nextBooking.booking.trainerName?' · '+nextBooking.booking.trainerName:'');
     }else{
@@ -810,9 +818,17 @@ async function loadClientHomeData(uid,email){
       if(eventSub)eventSub.textContent='You have '+(weekly.workoutsThisWeek||0)+' workout'+((weekly.workoutsThisWeek||0)===1?'':'s')+' this week. Open training to log the next one.';
     }
     if(eventFeed){
-      eventFeed.innerHTML=timeline.length?timeline.slice(0,3).map(function(entry){
+      // Merge booked bookings (timeline) + available admin classes side-by-side so clients always see what's bookable
+      var bookedIds=timeline.map(function(e){return e.booking&&e.booking.classId;}).filter(Boolean);
+      var extraAvail=availClasses.filter(function(a){return bookedIds.indexOf(a.booking&&a.booking.classId)<0;});
+      var feedEntries=timeline.concat(extraAvail);
+      eventFeed.innerHTML=feedEntries.length?feedEntries.slice(0,5).map(function(entry){
         var b=entry.booking||{};
-        return '<div class="event-feed-item"><span class="event-feed-name">'+clientEscape(b.className||'Booked class')+'</span><span class="event-feed-time">'+clientEscape(formatClientDayTime(b.day,b.time))+'</span></div>';
+        var isAvail=b._isAvailable;
+        return '<div class="event-feed-item">'
+          +'<span class="event-feed-name">'+clientEscape(b.className||'Class')+(isAvail?' <span style="opacity:0.55;font-size:0.75em">(available)</span>':'')+'</span>'
+          +'<span class="event-feed-time">'+clientEscape(formatClientDayTime(b.day,b.time))+(b.trainerName?(' · '+clientEscape(b.trainerName)):'')+'</span>'
+          +'</div>';
       }).join(''):'<div class="event-feed-item"><span class="event-feed-name">No upcoming events</span><span class="event-feed-time">Book a class</span></div>';
     }
   }catch(e){

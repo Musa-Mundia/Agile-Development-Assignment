@@ -349,7 +349,7 @@ body.light canvas[id^="chart-"]{background:#1a1010;border-radius:8px}
     <div class="nav-item" data-panel="panel-store"><span class="nav-icon">🛒</span>Store</div>
     <div class="nav-item" data-panel="panel-finances"><span class="nav-icon">💴</span>Finances</div>
     <div class="nav-item" data-panel="panel-admins"><span class="nav-icon">🛡️</span>Admins</div>
-    <div class="nav-item" data-panel="panel-trainer-links"><span class="nav-icon">🔗</span>Trainer Links
+    <div class="nav-item" data-panel="panel-trainer-links"><span class="nav-icon">�‍🏫</span>Trainer Mgmt
       <span class="notification-badge hidden" id="notif-trainer-links">0</span></div>
     <div class="nav-item" data-panel="panel-classes"><span class="nav-icon">🥋</span>Classes</div>
     <div class="nav-item" data-panel="panel-messenger"><span class="nav-icon">💬</span>Messenger
@@ -442,7 +442,7 @@ body.light canvas[id^="chart-"]{background:#1a1010;border-radius:8px}
           <div class="stat-card" id="card-trainer-links">
             <div class="stat-body">
               <div class="stat-num" id="stat-trainers">—</div>
-              <div class="stat-label">Trainer-Client Links</div>
+              <div class="stat-label">Registered Trainers</div>
               <div class="stat-sub" id="stat-trainers-sub">Loading…</div>
             </div>
           </div>
@@ -501,12 +501,12 @@ body.light canvas[id^="chart-"]{background:#1a1010;border-radius:8px}
             <p id="trainers-subtitle">Loading trainers…</p>
           </div>
           <div class="sec-head-right">
-            <button class="sec-btn red" onclick="document.querySelector('[data-panel=panel-trainer-links]').click()">Trainer-Client Links</button>
+            <button class="sec-btn red" onclick="document.querySelector('[data-panel=panel-trainer-links]').click()">Trainer Management</button>
           </div>
         </div>
         <div class="trainers-row" id="admin-trainers-row">
           <div style="grid-column:1/-1;padding:22px;text-align:center;background:var(--card);border-radius:11px;border:1px solid var(--border);color:var(--muted);font-size:.76rem">
-            Trainer data is loaded by the backend — open <strong style="color:var(--red);cursor:pointer" onclick="document.querySelector('[data-panel=panel-trainer-links]').click()">Trainer Links</strong> to manage trainers.
+            Trainer data is loaded by the backend — open <strong style="color:var(--red);cursor:pointer" onclick="document.querySelector('[data-panel=panel-trainer-links]').click()">Trainer Management</strong> to manage trainers.
           </div>
         </div>
 
@@ -540,6 +540,16 @@ body.light canvas[id^="chart-"]{background:#1a1010;border-radius:8px}
           <h4>Attendance Heatmap</h4>
           <div class="hm-sub" id="heatmap-subtitle">Last 30 days</div>
           <div class="hm-grid" id="heatmap-grid"></div>
+        </div>
+
+        <!-- Trainer-Client Links sidebar card -->
+        <div class="r-card" style="padding:16px 18px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+            <h4 style="margin:0;font-size:.82rem">Trainer-Client Links</h4>
+            <button onclick="document.querySelector('[data-panel=panel-trainer-links]').click()"
+              style="font-size:.62rem;background:transparent;border:1px solid rgba(230,57,70,.3);color:var(--red);border-radius:4px;padding:2px 7px;cursor:pointer">View All</button>
+          </div>
+          <div id="admin-sidebar-links" style="font-size:.76rem;color:var(--muted)">Loading…</div>
         </div>
 
         <!-- Quick Actions card -->
@@ -768,7 +778,7 @@ function renderAdminTrainers(trainers){
   var sub=document.getElementById('trainers-subtitle');
   if(!trainers||!trainers.length){
     if(sub)sub.textContent='No trainers registered yet';
-    row.innerHTML='<div style="grid-column:1/-1;padding:22px;text-align:center;background:var(--card);border-radius:11px;border:1px solid var(--border);color:var(--muted);font-size:.76rem">No trainers registered yet. <strong style="color:var(--red);cursor:pointer" onclick="document.querySelector(\'[data-panel=panel-trainer-links]\').click()">Add via Trainer-Client Links</strong></div>';
+    row.innerHTML='<div style="grid-column:1/-1;padding:22px;text-align:center;background:var(--card);border-radius:11px;border:1px solid var(--border);color:var(--muted);font-size:.76rem">No trainers registered yet. <strong style="color:var(--red);cursor:pointer" onclick="document.querySelector(\'[data-panel=panel-trainer-links]\').click()">Open Trainer Management</strong></div>';
     return;
   }
   if(sub)sub.textContent=trainers.length+' trainer'+(trainers.length===1?'':'s')+' registered';
@@ -979,11 +989,11 @@ async function computeMemberOfTheDay(stats){
         var sm=document.getElementById('stat-members');if(sm)sm.textContent=stats.totalMembers||0;
         var sc=document.getElementById('stat-checkins');if(sc)sc.textContent=stats.activeMemberships||0;
         var sr=document.getElementById('stat-revenue');if(sr)sr.textContent='£'+(stats.totalRevenue||0).toFixed(0);
-        var st=document.getElementById('stat-trainers');if(st)st.textContent=stats.trainerClientLinks||0;
+        var st=document.getElementById('stat-trainers');if(st)st.textContent=stats.totalTrainers||0;
         var ss1=document.getElementById('stat-members-sub');if(ss1)ss1.textContent=(stats.totalClients||0)+' clients · '+(stats.totalTrainers||0)+' trainers';
         var ss2=document.getElementById('stat-memberships-sub');if(ss2)ss2.textContent=(stats.expiredMemberships||0)+' expired';
-        var ss3=document.getElementById('stat-revenue-sub');if(ss3)ss3.textContent='Expenses: £'+(stats.totalExpenses||0).toFixed(0)+' · Net: £'+(stats.netProfit||0).toFixed(0);
-        var ss4=document.getElementById('stat-trainers-sub');if(ss4)ss4.textContent=(stats.totalTrainers||0)+' trainers registered';
+        var ss3=document.getElementById('stat-revenue-sub');if(sr)ss3.textContent='Expenses: £'+(stats.totalExpenses||0).toFixed(0)+' · Net: £'+(stats.netProfit||0).toFixed(0);
+        var ss4=document.getElementById('stat-trainers-sub');if(ss4)ss4.textContent=(stats.trainerClientLinks||0)+' active client links';
         computeMemberOfTheDay(stats).then(function(top){
           if(!top)return;
           var m=top.client||{};
@@ -998,6 +1008,28 @@ async function computeMemberOfTheDay(stats){
           }
         });
       }).catch(function(){});
+      // Populate sidebar Trainer-Client Links card
+      if(typeof getAllTrainerClientLinks==='function'&&typeof getAllMembers==='function'){
+        Promise.all([getAllTrainerClientLinks(),getAllMembers()]).then(function(res){
+          var links=res[0],members=res[1];
+          var map={};members.forEach(function(m){map[m.id]=m;});
+          var el=document.getElementById('admin-sidebar-links');
+          if(!el)return;
+          if(!links.length){el.innerHTML='<span>No links yet.</span>';return;}
+          el.innerHTML=links.slice(0,6).map(function(l){
+            var trName=(map[l.trainerId]&&(map[l.trainerId].name||map[l.trainerId].displayName))||'Trainer';
+            var clName=(map[l.clientId]&&(map[l.clientId].name||map[l.clientId].displayName))||'Client';
+            return '<div style="padding:5px 0;border-bottom:1px solid rgba(255,255,255,0.06);display:flex;align-items:center;gap:6px">'
+              +'<span style="color:#e96d25;font-weight:600">'+trName+'</span>'
+              +'<span style="opacity:0.4;font-size:.7rem">\u2192</span>'
+              +'<span style="color:#00c850">'+clName+'</span>'
+              +'</div>';
+          }).join('')
+          +(links.length>6?'<div style="opacity:0.5;padding-top:6px;font-size:.7rem">+'+(links.length-6)+' more \u2014 click View All</div>':'');
+        }).catch(function(){
+          var el=document.getElementById('admin-sidebar-links');if(el)el.textContent='Could not load.';
+        });
+      }
     }
     if(attempts>40)clearInterval(timer);
   },250);

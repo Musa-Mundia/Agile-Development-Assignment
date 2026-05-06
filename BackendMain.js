@@ -480,8 +480,22 @@ async function updateTrainerPublicProfile(trainerId, payload) {
     accentColor: String(payload.accentColor || "#0887e2").trim() || "#0887e2",
     updatedAt: Date.now()
   };
-
+  // Working hours: store as-is, reset approval when trainer edits
+  if (payload.workingHours && typeof payload.workingHours === "object") {
+    safe.workingHours = payload.workingHours;
+    safe.workingHoursApproved = false; // must be re-approved by admin after each edit
+  }
   await db.ref("users/" + trainerId).update(safe);
+}
+
+/**
+ * Fetch a trainer's working hours and approval status.
+ */
+async function getTrainerWorkingHours(trainerId) {
+  const snap = await db.ref("users/" + trainerId).once("value");
+  if (!snap.exists()) return { hours: {}, approved: false };
+  const data = snap.val() || {};
+  return { hours: data.workingHours || {}, approved: !!data.workingHoursApproved, name: data.name || "" };
 }
 
 /**
@@ -661,9 +675,9 @@ async function getMembership(userId) {
 
   function rankFromNameAndPrice(name, price) {
     const n = String(name || "").toLowerCase();
-    if (n.includes("starter")) return 1;
-    if (n.includes("core")) return 2;
-    if (n.includes("elite")) return 3;
+    if (n.includes("starter")) return 0;
+    if (n.includes("core")) return 1;
+    if (n.includes("elite")) return 2;
     return Number(price) || 0;
   }
 
@@ -741,15 +755,132 @@ async function getMembership(userId) {
       return membershipRecency(b) - membershipRecency(a);
     });
 
-    const chosen = activeCandidates[0];
+    let chosen = activeCandidates[0];
+
+    // Reconcile with latest paid membership data to avoid showing stale active plans.
+    // If payment history points to a newer/higher valid plan, prefer that as source-of-truth.
+    const paid = await getClientMembershipPayments(userId).catch(() => []);
+    const latestPaid = paid.find(p => (p.status || "paid") === "paid");
+    if (latestPaid) {
+      const paidMembership = latestPaid.membershipId
+        ? all.find(m => m.id === latestPaid.membershipId)
+        : null;
+
+      const chosenRank = membershipRank(chosen);
+      const chosenRecency = membershipRecency(chosen);
+
+      if (paidMembership && (!paidMembership.expiresAt || paidMembership.expiresAt >= now)) {
+        const paidRank = membershipRank(paidMembership);
+        const paidRecency = membershipRecency(paidMembership);
+        const shouldPreferPaidMembership =
+          paidRank > chosenRank ||
+          paidRecency > chosenRecency ||
+          (latestPaid.createdAt || 0) > chosenRecency;
+
+        if (shouldPreferPaidMembership) {
+          if (String(paidMembership.status || "").toLowerCase() !== "active") {
+            await updateMembership(paidMembership.id, {
+              status: "active",
+              recoveredAt: now,
+              recoveryReason: "Promoted to active from latest paid membership"
+            }).catch(() => {});
+          }
+          chosen = { ...paidMembership, status: "active" };
+        }
+      } else {
+        const paidPlan = plans.find(p => p.id === latestPaid.planId)
+          || plans.find(p => String(p.name || "").toLowerCase() === String(latestPaid.planName || latestPaid.membershipType || "").toLowerCase())
+          || null;
+
+        const paidName = latestPaid.planName || latestPaid.membershipType || paidPlan?.name || "";
+        const paidPrice = Number(latestPaid.planPrice) || Number(paidPlan?.price) || Number(latestPaid.amount) || 0;
+        const paidRank = rankFromNameAndPrice(paidName, paidPrice);
+        const paidCreatedAt = Number(latestPaid.createdAt) || 0;
+        const paidDurationDays = Number(latestPaid.durationDays) || Number(paidPlan?.durationDays) || 30;
+        const paidExpiresAt = paidCreatedAt ? (paidCreatedAt + paidDurationDays * oneDay) : 0;
+        const paidStillValid = !paidExpiresAt || paidExpiresAt >= now;
+
+        const shouldRecoverFromLatestPaid = paidStillValid && (
+          paidRank > chosenRank ||
+          paidCreatedAt > chosenRecency
+        );
+
+        if (shouldRecoverFromLatestPaid) {
+          const recoveredId = await createMembership({
+            clientId: userId,
+            planId: latestPaid.planId || paidPlan?.id || "",
+            type: paidName || "Membership",
+            status: "active",
+            startedAt: paidCreatedAt || now,
+            durationDays: paidDurationDays,
+            expiresAt: paidExpiresAt || null,
+            price: paidPrice,
+            paymentMethod: latestPaid.method || "card",
+            recoveredAt: now,
+            recoveryReason: "Recovered from latest paid membership while stale active existed"
+          });
+
+          if (latestPaid.id) {
+            await db.ref("membership_payments/" + latestPaid.id).update({
+              membershipId: recoveredId,
+              updatedAt: now
+            }).catch(() => {});
+          }
+
+          chosen = {
+            id: recoveredId,
+            clientId: userId,
+            planId: latestPaid.planId || paidPlan?.id || "",
+            type: paidName || "Membership",
+            status: "active",
+            startedAt: paidCreatedAt || now,
+            durationDays: paidDurationDays,
+            expiresAt: paidExpiresAt || null,
+            price: paidPrice,
+            paymentMethod: latestPaid.method || "card"
+          };
+        }
+      }
+    }
 
     // Heal duplicate actives so UI and billing always use one authoritative active plan.
     for (const extra of activeCandidates.slice(1)) {
+      if (chosen && extra.id === chosen.id) continue;
       await updateMembership(extra.id, {
         status: "cancelled",
         cancelledAt: now,
         cancelReason: "Superseded by higher-tier or newer active membership"
       }).catch(() => {});
+    }
+
+    if (chosen && activeCandidates[0] && chosen.id !== activeCandidates[0].id) {
+      await updateMembership(activeCandidates[0].id, {
+        status: "cancelled",
+        cancelledAt: now,
+        cancelReason: "Superseded by latest paid membership resolution"
+      }).catch(() => {});
+    }
+
+    // Normalize: ensure type is always set, preferring latest paid plan name as source-of-truth
+    if (chosen) {
+      const linkedPlan = plans.find(p => p.id === chosen.planId)
+        || plans.find(p => String(p.name || "").toLowerCase() === String(chosen.type || "").toLowerCase());
+      
+      // Prefer paid plan name over old database record type to avoid stale "Starter" overrides
+      let preferredType = chosen.type;
+      if (latestPaid) {
+        const paidPlanName = latestPaid.planName || latestPaid.membershipType;
+        if (paidPlanName && (paidPlanName !== "Starter" || !chosen.type || chosen.type === "Starter")) {
+          preferredType = paidPlanName;
+        }
+      }
+      
+      chosen.type = preferredType 
+        || linkedPlan?.name 
+        || chosen.name 
+        || chosen.planName 
+        || chosen.membershipType 
+        || "Membership";
     }
 
     return chosen;
@@ -770,7 +901,12 @@ async function getMembership(userId) {
           recoveryReason: "Recovered from paid membership record"
         }).catch(() => {});
       }
-      return { ...paidMembership, status: "active" };
+      // Use paid plan name as authoritative type, not old database record
+      const paidPlanName = paidWithMembership.planName || paidWithMembership.membershipType;
+      const linkedPlan = plans.find(p => p.id === paidMembership.planId)
+        || plans.find(p => String(p.name || "").toLowerCase() === String(paidPlanName || "").toLowerCase());
+      const normType = paidPlanName || linkedPlan?.name || paidMembership.type || paidMembership.name || paidMembership.planName || paidMembership.membershipType || "Membership";
+      return { ...paidMembership, status: "active", type: normType };
     }
   }
 
@@ -821,7 +957,26 @@ async function getMembership(userId) {
     }
   }
 
-  return all[0] || null;
+  // Final fallback: normalize using latest paid data if available
+  const finalPaid = await getClientMembershipPayments(userId).catch(() => []);
+  const finalLatestPaid = finalPaid.find(p => (p.status || "paid") === "paid");
+  
+  const result = all[0] || null;
+  if (result) {
+    const linkedPlan = plans.find(p => p.id === result.planId)
+      || plans.find(p => String(p.name || "").toLowerCase() === String(result.type || "").toLowerCase());
+    
+    // Prefer paid plan name over old record type to avoid stale values
+    const paidPlanName = finalLatestPaid?.planName || finalLatestPaid?.membershipType;
+    result.type = paidPlanName 
+      || linkedPlan?.name 
+      || result.type 
+      || result.name 
+      || result.planName 
+      || result.membershipType 
+      || "Membership";
+  }
+  return result;
 }
 
 // ============================================================
@@ -1118,7 +1273,8 @@ async function createClass(trainerId, trainerName, data) {
   // source: "admin" = global (all clients see it)
   //         "trainer" = linked clients only (clients who hired this trainer)
   const isPublic = data.isPublic !== false;
-  await db.ref("classes").push().set({
+  const ref = db.ref("classes").push();
+  await ref.set({
     trainerId,
     trainerName,
     name: data.name,
@@ -1133,6 +1289,7 @@ async function createClass(trainerId, trainerName, data) {
     source: isPublic ? "admin" : "trainer",
     createdAt: Date.now()
   });
+  return ref.key;
 }
 
 /**
@@ -1509,14 +1666,6 @@ async function deleteMembership(membershipId) {
 
 const DEFAULT_MEMBERSHIP_PLANS = [
   {
-    slug: "starter",
-    name: "Starter",
-    durationDays: 30,
-    price: 29.99,
-    description: "Essential gym access for independent training.",
-    features: ["Gym floor access", "1 group class / week", "Locker access"]
-  },
-  {
     slug: "core",
     name: "Core",
     durationDays: 30,
@@ -1545,7 +1694,12 @@ async function getMembershipPlans() {
   }
 
   const result = [];
-  snap.forEach(child => result.push({ id: child.key, ...child.val(), isDefault: false }));
+  snap.forEach(child => {
+    const data = child.val() || {};
+    const nm = String(data.name || "").toLowerCase();
+    if (nm.includes("starter")) return;
+    result.push({ id: child.key, ...data, isDefault: false });
+  });
   result.sort((a, b) => (a.price || 0) - (b.price || 0));
   return result;
 }
@@ -1595,17 +1749,7 @@ async function getAllMembershipPayments() {
  */
 async function recordTransaction(txn) {
   const ref = db.ref("transactions").push();
-  await ref.set({
-    type: txn?.type || "income",
-    amount: Number(txn?.amount) || 0,
-    description: String(txn?.description || "").trim(),
-    category: String(txn?.category || "").trim(),
-    clientId: String(txn?.clientId || "").trim(),
-    method: String(txn?.method || "").trim(),
-    summary: String(txn?.summary || "").trim(),
-    items: Array.isArray(txn?.items) ? txn.items : [],
-    createdAt: Date.now()
-  });
+  await ref.set({ ...txn, createdAt: Date.now() });
   return ref.key;
 }
 
@@ -1616,49 +1760,74 @@ async function createStorePurchase(clientId, data) {
 }
 
 async function getClientStorePurchases(clientId) {
-  const [storeSnap, txSnap] = await Promise.all([
-    db.ref("store_purchases/" + clientId).once("value"),
-    db.ref("transactions").once("value")
-  ]);
-
+  // Read from store_purchases/<clientId> (primary source)
+  const snap = await db.ref("store_purchases/" + clientId).once("value");
   const result = [];
-
-  if (storeSnap.exists()) {
-    storeSnap.forEach(child => result.push({ id: child.key, ...child.val(), _source: "store_purchases" }));
+  if (snap.exists()) {
+    snap.forEach(child => result.push({ id: child.key, _src: "sp", ...child.val() }));
   }
 
-  if (txSnap.exists()) {
-    txSnap.forEach(child => {
-      const t = child.val() || {};
-      if (t.type !== "store_purchase") return;
-      const belongsToClient = (String(t.clientId || "") === String(clientId || "")) || !t.clientId;
-      if (!belongsToClient) return;
-      result.push({
-        id: "txn-" + child.key,
-        total: Number(t.amount) || 0,
-        method: t.method || "card",
-        summary: t.summary || t.description || "Store purchase",
-        items: Array.isArray(t.items) ? t.items : [],
-        createdAt: Number(t.createdAt) || 0,
-        _source: "transactions"
+  // Also read from global transactions — include records tagged with this clientId
+  // OR legacy anonymous records (no clientId) to recover purchases made before this fix.
+  try {
+    const txSnap = await db.ref("transactions").once("value");
+    if (txSnap.exists()) {
+      txSnap.forEach(child => {
+        const t = child.val();
+        if (t.type !== "store_purchase") return;
+        const belongsToClient = t.clientId === clientId || (!t.clientId);
+        if (!belongsToClient) return;
+        // Avoid duplicating entries already present in store_purchases.
+        // Deduplicate by matching amount + timestamp within 5 seconds.
+        const tTs = Number(t.createdAt) || 0;
+        const isDupe = result.some(r => {
+          const amt = Number(r.total) || Number(r.amount) || 0;
+          const tAmt = Number(t.amount) || 0;
+          return amt === tAmt && Math.abs((Number(r.createdAt) || 0) - tTs) < 5000;
+        });
+        if (isDupe) return;
+        result.push({
+          id: child.key,
+          _src: "tx",
+          total: Number(t.amount) || 0,
+          amount: Number(t.amount) || 0,
+          method: t.method || "card",
+          summary: t.summary || t.description || "",
+          items: Array.isArray(t.items) ? t.items : [],
+          createdAt: t.createdAt || 0
+        });
       });
-    });
-  }
+    }
+  } catch (e) { /* ignore */ }
 
-  // De-duplicate near-identical entries (same amount within ~5s window).
-  const seen = new Set();
-  const deduped = [];
-  result.forEach(p => {
-    const total = Number(p.total) || 0;
-    const bucket = Math.floor((Number(p.createdAt) || 0) / 5000);
-    const key = `${total}|${bucket}`;
-    if (seen.has(key)) return;
-    seen.add(key);
-    deduped.push(p);
+  const tsOf = (p) => Number(p && (p.createdAt || p.updatedAt || p.purchasedAt || p.timestamp || p.date)) || 0;
+  result.sort((a, b) => {
+    const bt = tsOf(b);
+    const at = tsOf(a);
+    if (bt !== at) return bt - at;
+    return String(b.id || "").localeCompare(String(a.id || ""));
   });
+  return result;
+}
 
-  deduped.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-  return deduped;
+async function createTrainerStoreRecommendation(trainerId, clientId, data) {
+  const ref = db.ref("trainer_store_recommendations/" + trainerId).push();
+  await ref.set({
+    trainerId,
+    clientId,
+    ...data,
+    createdAt: Date.now()
+  });
+  return ref.key;
+}
+
+async function getTrainerStoreRecommendations(trainerId) {
+  const snap = await db.ref("trainer_store_recommendations/" + trainerId).once("value");
+  if (!snap.exists()) return [];
+  const result = [];
+  snap.forEach(child => result.push({ id: child.key, ...child.val() }));
+  result.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  return result;
 }
 
 /**
@@ -2092,6 +2261,11 @@ function initPanelNav() {
     item.addEventListener("click", () => {
       let panelId = item.getAttribute("data-panel");
       if (panelId === "panel-trainers") panelId = "panel-pick-trainer";
+      // Hide dashboard home, clear active states, set this item active
+      const home = document.getElementById("dashboard-home");
+      if (home) home.style.display = "none";
+      document.querySelectorAll(".nav-item").forEach(n => n.classList.remove("active"));
+      item.classList.add("active");
       document.querySelectorAll(".xgym-panel").forEach(p => {
         p.style.display = "none";
       });
@@ -2099,6 +2273,7 @@ function initPanelNav() {
       if (grid) grid.style.display = "none";
       const panel = document.getElementById(panelId);
       if (panel) panel.style.display = "block";
+      if (typeof syncPanelBackButton === "function") setTimeout(syncPanelBackButton, 0);
     });
   });
 
@@ -2106,11 +2281,15 @@ function initPanelNav() {
   const dashBtn = document.getElementById("nav-dashboard");
   if (dashBtn) {
     dashBtn.addEventListener("click", () => {
+      const home = document.getElementById("dashboard-home");
+      if (home) home.style.display = "block";
       document.querySelectorAll(".xgym-panel").forEach(p => {
         p.style.display = "none";
       });
+      document.querySelectorAll(".nav-item").forEach(n => n.classList.remove("active"));
       const grid = document.querySelector(".grid");
       if (grid) grid.style.display = "";
+      if (typeof syncPanelBackButton === "function") setTimeout(syncPanelBackButton, 0);
     });
   }
 }
@@ -2327,11 +2506,11 @@ async function initClientPage() {
     console.warn("[X-Gym] Client page: no user logged in — skipping redirect (test mode)");
     initPanelNav();
     _bindCardToPanel("card-cart",       "panel-cart");
-    _bindCardToPanel("card-workouts",   "panel-workouts");
+    _bindCardToPanel("card-workouts",   "panel-booking");
     _bindCardToPanel("card-membership", "panel-membership");
     _bindCardToPanel("card-progress",   "panel-progress");
-    _bindCardToPanel("card-biography",  "panel-biography");
-    _bindCardToPanel("card-store",      "panel-pick-trainer");
+    _bindCardToPanel("card-biography",  "panel-progress");
+    _bindCardToPanel("card-store",      "panel-cart");
     _bindCardToPanel("card-booking",     "panel-booking");
     _bindCardToPanel("card-pick-trainer","panel-pick-trainer");
     _bindCardToPanel("card-settings",   "panel-settings");
@@ -2354,11 +2533,11 @@ async function initClientPage() {
     console.warn("[X-Gym] Client page: no profile found — staying on page (test mode)");
     initPanelNav();
     _bindCardToPanel("card-cart",       "panel-cart");
-    _bindCardToPanel("card-workouts",   "panel-workouts");
+    _bindCardToPanel("card-workouts",   "panel-booking");
     _bindCardToPanel("card-membership", "panel-membership");
     _bindCardToPanel("card-progress",   "panel-progress");
-    _bindCardToPanel("card-biography",  "panel-biography");
-    _bindCardToPanel("card-store",      "panel-pick-trainer");
+    _bindCardToPanel("card-biography",  "panel-progress");
+    _bindCardToPanel("card-store",      "panel-cart");
     _bindCardToPanel("card-booking",     "panel-booking");
     _bindCardToPanel("card-pick-trainer","panel-pick-trainer");
     _bindCardToPanel("card-settings",   "panel-settings");
@@ -2383,7 +2562,6 @@ async function initClientPage() {
   {
     // Page loaded successfully — clear any redirect loop counter
     _clearRedirectLoop();
-    window._currentClientId = user.uid;
 
     // Populate greeting
     const greeting = document.getElementById("client-greeting");
@@ -2395,11 +2573,12 @@ async function initClientPage() {
 
     // Card clicks
     _bindCardToPanel("card-cart",       "panel-cart");
-    _bindCardToPanel("card-workouts",   "panel-workouts");
+    _bindCardToPanelWithReload("card-workouts", "panel-booking",
+      () => _loadClientBookingPanel(user.uid, profile.name));
     _bindCardToPanelWithReload("card-membership", "panel-membership", () => _loadClientMembershipPanel(user.uid));
     _bindCardToPanel("card-progress",   "panel-progress");
-    _bindCardToPanel("card-biography",  "panel-biography");
-    _bindCardToPanel("card-store",      "panel-pick-trainer");
+    _bindCardToPanel("card-biography",  "panel-progress");
+    _bindCardToPanel("card-store",      "panel-cart");
     _bindCardToPanel("card-pick-trainer","panel-pick-trainer");
     _bindCardToPanel("card-settings",   "panel-settings");
     _bindCardToPanel("card-messenger",   "panel-messenger");
@@ -2418,6 +2597,7 @@ async function initClientPage() {
     });
 
     // Load panels content
+    window._currentClientId = user.uid;
     _loadClientWorkoutsPanel(user.uid);
     _loadClientProgressPanel(user.uid, profile.shareCode);
     _loadClientMealsPanel(user.uid);
@@ -2433,18 +2613,24 @@ async function initClientPage() {
 }
 
 function _bindCardToPanel(cardId, panelId) {
-  const card  = document.getElementById(cardId);
-  const panel = document.getElementById(panelId);
-  if (!card || !panel) return;
+  const card = document.getElementById(cardId);
+  if (!card) return;
   card.addEventListener("click", () => {
-    // Hide all panels first
-    document.querySelectorAll(".xgym-panel").forEach(p => p.style.display = "none");
-    // Hide the card grid so the panel has full space
-    const grid = document.querySelector(".grid");
-    if (grid) grid.style.display = "none";
-    // Show the target panel
-    panel.style.display = "block";
-    panel.scrollIntoView({ behavior: "smooth" });
+    const nav = document.querySelector('.nav-item[data-panel="' + panelId + '"]');
+    if (nav) {
+      nav.click();
+    } else {
+      // Fallback: no nav item for this panel, do it directly
+      const home = document.getElementById("dashboard-home");
+      if (home) home.style.display = "none";
+      document.querySelectorAll(".nav-item").forEach(n => n.classList.remove("active"));
+      document.querySelectorAll(".xgym-panel").forEach(p => p.style.display = "none");
+      const grid = document.querySelector(".grid");
+      if (grid) grid.style.display = "none";
+      const panel = document.getElementById(panelId);
+      if (panel) panel.style.display = "block";
+      if (typeof syncPanelBackButton === "function") setTimeout(syncPanelBackButton, 0);
+    }
   });
 }
 
@@ -2453,15 +2639,23 @@ function _bindCardToPanel(cardId, panelId) {
  * so the panel reloads fresh data on every open.
  */
 function _bindCardToPanelWithReload(cardId, panelId, onOpen) {
-  const card  = document.getElementById(cardId);
-  const panel = document.getElementById(panelId);
-  if (!card || !panel) return;
+  const card = document.getElementById(cardId);
+  if (!card) return;
   card.addEventListener("click", () => {
-    document.querySelectorAll(".xgym-panel").forEach(p => p.style.display = "none");
-    const grid = document.querySelector(".grid");
-    if (grid) grid.style.display = "none";
-    panel.style.display = "block";
-    panel.scrollIntoView({ behavior: "smooth" });
+    const nav = document.querySelector('.nav-item[data-panel="' + panelId + '"]');
+    if (nav) {
+      nav.click();
+    } else {
+      const home = document.getElementById("dashboard-home");
+      if (home) home.style.display = "none";
+      document.querySelectorAll(".nav-item").forEach(n => n.classList.remove("active"));
+      document.querySelectorAll(".xgym-panel").forEach(p => p.style.display = "none");
+      const grid = document.querySelector(".grid");
+      if (grid) grid.style.display = "none";
+      const panel = document.getElementById(panelId);
+      if (panel) panel.style.display = "block";
+      if (typeof syncPanelBackButton === "function") setTimeout(syncPanelBackButton, 0);
+    }
     if (onOpen) onOpen();
   });
 }
@@ -2739,9 +2933,9 @@ async function _loadClientWorkoutsPanel(clientId) {
                     border-bottom:1px solid rgba(255,255,255,0.04)">
                 <div style="display:flex;align-items:center;gap:8px">
                   <span style="width:6px;height:6px;border-radius:50%;background:#e96d25;flex-shrink:0"></span>
-                  <span>${ex.name}</span>
+                  <span>${ex.name}${(ex.description || ex.notes) ? `<span style="display:block;font-size:0.72rem;opacity:0.62;margin-top:2px">${ex.description || ex.notes}</span>` : ""}</span>
                 </div>
-                <span style="opacity:0.6;font-size:0.85rem">${ex.sets}\u00D7${ex.reps}${ex.weight ? " @ " + ex.weight + "lb" : ""}${ex.notes ? " (" + ex.notes + ")" : ""}</span>
+                <span style="opacity:0.6;font-size:0.85rem">${ex.sets}\u00D7${ex.reps}${ex.weight ? " @ " + ex.weight + "lb" : ""}</span>
               </div>`
             ).join("");
             html += `<div class="card" style="margin-bottom:10px">
@@ -3607,9 +3801,8 @@ async function _syncPendingStoreActions(uid) {
         function syncPlanRank(plan) {
           if (!plan) return 0;
           const nm = String(plan.name || plan.type || "").toLowerCase();
-          if (nm.includes("starter")) return 1;
-          if (nm.includes("core")) return 2;
-          if (nm.includes("elite")) return 3;
+          if (nm.includes("core")) return 1;
+          if (nm.includes("elite")) return 2;
           return Number(plan.price) || 0;
         }
 
@@ -3669,15 +3862,19 @@ async function _syncPendingStoreActions(uid) {
       for (const o of orders) {
         if (o.status !== "paid") continue;
         // Write to store_purchases so the dashboard cart panel shows it
+        const syncItems = Array.isArray(o.itemsData) ? o.itemsData : [];
+        const syncSummary = o.items || "";
         await createStorePurchase(uid, {
           total: Number(o.amount) || 0,
           method: o.method || "card",
-          summary: o.items || "",
-          items: Array.isArray(o.itemsData) ? o.itemsData : []
+          summary: syncSummary,
+          items: syncItems
         });
         await recordTransaction({
           type: "store_purchase", amount: Number(o.amount) || 0,
-          description: "Store purchase: " + (o.items || ""), category: "store"
+          description: "Store purchase: " + syncSummary, category: "store",
+          clientId: uid || null, method: o.method || "card",
+          summary: syncSummary, items: syncItems
         });
       }
     }
@@ -3696,9 +3893,17 @@ async function _loadCartPanel(uid) {
   const iStyle = `padding:9px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:inherit;font-family:inherit;font-size:0.86rem`;
 
   async function render() {
+    const effectiveUid = uid || (auth && auth.currentUser ? auth.currentUser.uid : null) || (firebase && firebase.auth ? (firebase.auth().currentUser && firebase.auth().currentUser.uid) : null);
     const cart = getCart();
     const total = cart.reduce((s, i) => s + i.price * i.qty, 0);
-    const purchases = uid ? await getClientStorePurchases(uid).catch(() => []) : [];
+    const purchases = effectiveUid ? await getClientStorePurchases(effectiveUid).catch(() => []) : [];
+    const purchaseTs = (p) => Number(p && (p.createdAt || p.updatedAt || p.purchasedAt || p.timestamp || p.date)) || 0;
+    const purchasesSorted = (purchases || []).slice().sort((a, b) => {
+      const bt = purchaseTs(b);
+      const at = purchaseTs(a);
+      if (bt !== at) return bt - at;
+      return String(b.id || "").localeCompare(String(a.id || ""));
+    });
 
     panel.innerHTML = `
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:20px">
@@ -3746,11 +3951,11 @@ async function _loadCartPanel(uid) {
       <div class="card" style="cursor:default;margin-bottom:20px">
         <h3 style="margin:0 0 12px">Purchase History</h3>
         <div id="cart-purchase-history">
-          ${!uid
+          ${!effectiveUid
             ? `<p style="opacity:0.55">Sign in to view purchase history.</p>`
-            : purchases.length === 0
+            : purchasesSorted.length === 0
               ? `<p style="opacity:0.55">No purchases yet.</p>`
-              : purchases.slice(0, 20).map(p => `
+              : purchasesSorted.slice(0, 50).map(p => `
                   <div style="padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.08)">
                     <div style="display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap">
                       <div>
@@ -3824,7 +4029,7 @@ async function _loadCartPanel(uid) {
     if (clearBtn) clearBtn.addEventListener("click", async () => { clearCart(); await render(); });
 
     const gotoStoreBtn = document.getElementById("cart-goto-store-btn");
-    if (gotoStoreBtn) gotoStoreBtn.addEventListener("click", () => _openStore(uid));
+    if (gotoStoreBtn) gotoStoreBtn.addEventListener("click", () => _openStore(effectiveUid));
 
     // Checkout
     const checkoutBtn = document.getElementById("cart-checkout-btn");
@@ -3832,7 +4037,7 @@ async function _loadCartPanel(uid) {
       checkoutBtn.addEventListener("click", async () => {
         const cf = document.getElementById("cart-checkout-form");
         let savedCards = [];
-        if (uid) { try { savedCards = await getPaymentCards(uid); } catch (e) { /* no cards */ } }
+        if (effectiveUid) { try { savedCards = await getPaymentCards(effectiveUid); } catch (e) { /* no cards */ } }
         const defaultCard = savedCards.find(c => c.isDefault) || savedCards[0] || null;
 
         cf.innerHTML = `
@@ -3852,7 +4057,7 @@ async function _loadCartPanel(uid) {
                 <input id="cart-cexp" type="text" placeholder="MM/YY" style="${iStyle}" maxlength="5">
                 <input id="cart-ccvc" type="password" placeholder="CVC" style="${iStyle}" maxlength="4">
               </div>
-              ${uid ? `<label style="font-size:0.82rem;cursor:pointer;display:flex;align-items:center;gap:6px;margin-bottom:10px"><input type="checkbox" id="cart-save-card"> Save card for future purchases</label>` : ""}
+              ${effectiveUid ? `<label style="font-size:0.82rem;cursor:pointer;display:flex;align-items:center;gap:6px;margin-bottom:10px"><input type="checkbox" id="cart-save-card"> Save card for future purchases</label>` : ""}
             </div>
             <div style="display:flex;gap:10px">
               <button id="cart-pay-btn" style="padding:9px 22px;border:none;border-radius:8px;background:linear-gradient(90deg,#00c853,#009944);color:#fff;cursor:pointer;font-weight:700">Pay Now</button>
@@ -3909,9 +4114,9 @@ async function _loadCartPanel(uid) {
               throw new Error("Not enough stock: " + stockErrors.join(", "));
             }
 
-            if (useNewCard && uid && document.getElementById("cart-save-card")?.checked) {
-              const newId = await savePaymentCard(uid, { cardHolder, cardNumber: cardNum, last4: cardNum.slice(-4), expiry: cardExp, isDefault: savedCards.length === 0 });
-              if (savedCards.length === 0) await setDefaultCard(uid, newId);
+            if (useNewCard && effectiveUid && document.getElementById("cart-save-card")?.checked) {
+              const newId = await savePaymentCard(effectiveUid, { cardHolder, cardNumber: cardNum, last4: cardNum.slice(-4), expiry: cardExp, isDefault: savedCards.length === 0 });
+              if (savedCards.length === 0) await setDefaultCard(effectiveUid, newId);
             }
 
             for (const ci of latestCart) {
@@ -3923,24 +4128,27 @@ async function _loadCartPanel(uid) {
               }
             }
 
+            const cartItems = latestCart.map(i => ({ id: i.id, name: i.name, qty: i.qty, price: Number(i.price) || 0 }));
+            const cartSummary = latestCart.map(i => `${i.name} × ${i.qty}`).join(", ");
+            const cartMethod = useNewCard ? "card" : (defaultCard ? "saved_card" : "card");
+
             await recordTransaction({
               type: "store_purchase",
               amount: totalNow,
               description: "Cart purchase: " + latestCart.map(i => `${i.name} x${i.qty}`).join(", "),
               category: "store",
-              clientId: uid || auth?.currentUser?.uid || firebase.auth()?.currentUser?.uid || "",
-              method: useNewCard ? "card" : (defaultCard ? "saved_card" : "card"),
-              summary: latestCart.map(i => `${i.name} × ${i.qty}`).join(", "),
-              items: latestCart.map(i => ({ id: i.id, name: i.name, qty: i.qty, price: Number(i.price) || 0 }))
+              clientId: effectiveUid || null,
+              method: cartMethod,
+              summary: cartSummary,
+              items: cartItems
             });
 
-            const effectiveUid = uid || auth?.currentUser?.uid || firebase.auth()?.currentUser?.uid;
             if (effectiveUid) {
               await createStorePurchase(effectiveUid, {
                 total: totalNow,
-                method: useNewCard ? "card" : (defaultCard ? "saved_card" : "card"),
-                items: latestCart.map(i => ({ id: i.id, name: i.name, qty: i.qty, price: Number(i.price) || 0 })),
-                summary: latestCart.map(i => `${i.name} × ${i.qty}`).join(", ")
+                method: cartMethod,
+                items: cartItems,
+                summary: cartSummary
               });
             }
 
@@ -4446,8 +4654,8 @@ async function _loadClientBookingPanel(clientId, clientName, opts = {}) {
   const visibleClasses = classes.filter(c => {
     if (trainerClassIds.has(c.id)) return true;       // linked trainer's class — always show
     if (isLinkedTrainerClass(c)) return true;          // backup: ID/name match
-    if (!c.source || c.source === "admin") return true; // global/admin class
-    return false;                                       // trainer-private, not linked
+    if (c.isPublic !== false) return true;             // public/admin class (isPublic: true or missing = show)
+    return false;                                       // explicitly isPublic: false and not linked
   });
   const activeDays = DAYS.filter(d => visibleClasses.some(c => c.day === d));
 
@@ -4730,29 +4938,29 @@ async function _loadPickTrainerPanel(clientId) {
 
   const isLightMode = document.body.classList.contains("light");
   const ui = {
-    heading: isLightMode ? "#165d9b" : "#0887e2",
-    muted: isLightMode ? "rgba(20,40,60,0.72)" : "rgba(255,255,255,0.62)",
-    selectBg: isLightMode ? "rgba(255,255,255,0.95)" : "rgba(0,18,32,0.9)",
-    selectText: isLightMode ? "#15324d" : "#ffffff",
-    selectBorder: isLightMode ? "rgba(8,135,226,0.35)" : "rgba(8,165,226,0.3)",
-    modalBg: isLightMode ? "rgba(247,252,255,0.98)" : "rgba(0,18,32,0.97)",
-    modalBorder: isLightMode ? "rgba(8,135,226,0.32)" : "rgba(8,165,226,0.3)",
-    modalShadow: isLightMode ? "0 0 45px rgba(8,135,226,0.18)" : "0 0 60px rgba(8,165,226,0.3)",
-    cardBg: isLightMode ? "linear-gradient(160deg, rgba(255,255,255,0.97), rgba(240,248,255,0.95))" : "rgba(0,18,32,0.9)",
-    cardBorder: isLightMode ? "1px solid rgba(8,135,226,0.26)" : "1px solid rgba(8,165,226,0.15)",
-    cardShadow: isLightMode ? "0 10px 24px rgba(8,135,226,0.10)" : "0 0 25px rgba(8,165,226,0.12)",
-    cardTitle: isLightMode ? "#0f2940" : "#ffffff",
-    cardText: isLightMode ? "rgba(20,40,60,0.86)" : "rgba(255,255,255,0.7)",
-    cardSubtle: isLightMode ? "rgba(20,40,60,0.62)" : "rgba(255,255,255,0.6)",
-    cardDivider: isLightMode ? "rgba(8,135,226,0.18)" : "rgba(255,255,255,0.06)",
-    viewBtnText: isLightMode ? "#0f5f9e" : "#0887e2",
-    viewBtnBorder: isLightMode ? "1px solid rgba(15,95,158,0.35)" : "1px solid rgba(8,165,226,0.3)",
-    hiredBtnBg: isLightMode ? "rgba(15,41,64,0.12)" : "rgba(255,255,255,0.1)",
-    hiredBtnText: isLightMode ? "#35536f" : "#ffffff",
-    statsBg: isLightMode ? "rgba(15,95,158,0.08)" : "rgba(255,255,255,0.04)",
-    statsBorder: isLightMode ? "1px solid rgba(15,95,158,0.18)" : "1px solid rgba(255,255,255,0.06)",
-    overlayBg: isLightMode ? "rgba(17, 44, 68, 0.36)" : "rgba(0,0,0,0.75)",
-    closeColor: isLightMode ? "#15324d" : "#ffffff"
+    heading: isLightMode ? "#9f1e2a" : "#e63946",
+    muted: isLightMode ? "rgba(45,18,22,0.74)" : "rgba(255,255,255,0.64)",
+    selectBg: isLightMode ? "rgba(255,255,255,0.96)" : "rgba(24,10,12,0.9)",
+    selectText: isLightMode ? "#3d151b" : "#ffffff",
+    selectBorder: isLightMode ? "rgba(230,57,70,0.34)" : "rgba(230,57,70,0.32)",
+    modalBg: isLightMode ? "rgba(255,248,248,0.98)" : "rgba(20,8,10,0.97)",
+    modalBorder: isLightMode ? "rgba(230,57,70,0.28)" : "rgba(230,57,70,0.35)",
+    modalShadow: isLightMode ? "0 0 44px rgba(230,57,70,0.16)" : "0 0 60px rgba(230,57,70,0.26)",
+    cardBg: isLightMode ? "linear-gradient(160deg, rgba(255,255,255,0.97), rgba(255,244,245,0.95))" : "linear-gradient(165deg, rgba(26,11,13,0.96), rgba(14,8,9,0.95))",
+    cardBorder: isLightMode ? "1px solid rgba(230,57,70,0.24)" : "1px solid rgba(230,57,70,0.2)",
+    cardShadow: isLightMode ? "0 12px 26px rgba(230,57,70,0.08)" : "0 10px 26px rgba(230,57,70,0.12)",
+    cardTitle: isLightMode ? "#2a1115" : "#ffffff",
+    cardText: isLightMode ? "rgba(45,18,22,0.86)" : "rgba(255,255,255,0.72)",
+    cardSubtle: isLightMode ? "rgba(45,18,22,0.64)" : "rgba(255,255,255,0.6)",
+    cardDivider: isLightMode ? "rgba(230,57,70,0.18)" : "rgba(255,255,255,0.08)",
+    viewBtnText: isLightMode ? "#8f1c27" : "#ff9ba3",
+    viewBtnBorder: isLightMode ? "1px solid rgba(143,28,39,0.34)" : "1px solid rgba(255,155,163,0.35)",
+    hiredBtnBg: isLightMode ? "rgba(45,18,22,0.12)" : "rgba(255,255,255,0.12)",
+    hiredBtnText: isLightMode ? "#51313a" : "#ffffff",
+    statsBg: isLightMode ? "rgba(230,57,70,0.08)" : "rgba(255,255,255,0.05)",
+    statsBorder: isLightMode ? "1px solid rgba(230,57,70,0.16)" : "1px solid rgba(255,255,255,0.08)",
+    overlayBg: isLightMode ? "rgba(53,19,23,0.38)" : "rgba(0,0,0,0.75)",
+    closeColor: isLightMode ? "#3d151b" : "#ffffff"
   };
 
   const normalizeHex = (color) => {
@@ -4770,11 +4978,15 @@ async function _loadPickTrainerPanel(clientId) {
   };
 
   panel.innerHTML = `
-    <h2 style="color:${ui.heading}">Trainers ⊞</h2>
-    <p style="color:${ui.muted};margin-bottom:16px">Find your coach by specialty and compare pricing.</p>
+    <h2 style="color:${ui.heading};margin-bottom:6px">Trainers ⊞</h2>
+    <p style="color:${ui.muted};margin-bottom:14px">Find your coach by specialty and compare pricing</p>
+
+    <div id="pt-summary" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:14px"></div>
 
     <!-- Filter Bar -->
     <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:24px">
+      <input id="pt-search" type="text" placeholder="Search by trainer name or specialty"
+         style="padding:10px 16px;border-radius:8px;border:${ui.selectBorder};background:${ui.selectBg};color:${ui.selectText};font-family:'Exo 2',sans-serif;min-width:240px">
       <select id="pt-filter-specialty"
          style="padding:10px 16px;border-radius:8px;border:${ui.selectBorder};
            background:${ui.selectBg};color:${ui.selectText};font-family:'Exo 2',sans-serif;cursor:pointer">
@@ -4797,18 +5009,15 @@ async function _loadPickTrainerPanel(clientId) {
       </select>
     </div>
 
-    <div id="pt-grid-wrap" style="position:relative;margin-bottom:8px">
-      <button id="pt-scroll-left" aria-label="Scroll left"
-        style="position:absolute;left:6px;top:50%;transform:translateY(-50%);z-index:5;
-               width:34px;height:34px;border:none;border-radius:999px;display:none;
-               align-items:center;justify-content:center;cursor:pointer;
-               background:rgba(8,135,226,0.15);color:${ui.heading};font-size:20px;line-height:1">‹</button>
-      <div id="pt-trainer-grid" style="display:flex;flex-wrap:nowrap;overflow-x:auto;gap:20px;scroll-behavior:smooth;padding:4px 42px"></div>
-      <button id="pt-scroll-right" aria-label="Scroll right"
-        style="position:absolute;right:6px;top:50%;transform:translateY(-50%);z-index:5;
-               width:34px;height:34px;border:none;border-radius:999px;display:none;
-               align-items:center;justify-content:center;cursor:pointer;
-               background:rgba(8,135,226,0.15);color:${ui.heading};font-size:20px;line-height:1">›</button>
+    <div style="position:relative;margin-bottom:20px">
+      <button id="pt-scroll-left" style="position:absolute;left:0;top:50%;transform:translateY(-50%);z-index:10;width:44px;height:44px;border:none;border-radius:50%;background:rgba(230,57,70,0.15);color:#e63946;font-size:1.5rem;cursor:pointer;display:none;align-items:center;justify-content:center;backdrop-filter:blur(8px);transition:all 0.2s;font-weight:bold">‹</button>
+      <div id="pt-trainer-grid" style="display:flex;flex-wrap:nowrap;gap:20px;max-height:600px;overflow-x:auto;overflow-y:hidden;padding:0 50px 12px 50px;scroll-behavior:smooth;cursor:grab">
+      </div>
+      <button id="pt-scroll-right" style="position:absolute;right:0;top:50%;transform:translateY(-50%);z-index:10;width:44px;height:44px;border:none;border-radius:50%;background:rgba(230,57,70,0.15);color:#e63946;font-size:1.5rem;cursor:pointer;display:none;align-items:center;justify-content:center;backdrop-filter:blur(8px);transition:all 0.2s;font-weight:bold">›</button>
+      <div style="display:flex;gap:6px;margin-top:8px;justify-content:center">
+        <button id="pt-scroll-up" style="padding:6px 12px;border:1px solid ${ui.selectBorder};border-radius:6px;background:${ui.selectBg};color:${ui.selectText};cursor:pointer;font-size:0.9rem">↑ Scroll Up</button>
+        <button id="pt-scroll-down" style="padding:6px 12px;border:1px solid ${ui.selectBorder};border-radius:6px;background:${ui.selectBg};color:${ui.selectText};cursor:pointer;font-size:0.9rem">Scroll Down ↓</button>
+      </div>
     </div>
 
     <!-- Trainer Detail Modal (hidden) -->
@@ -4943,7 +5152,7 @@ async function _loadPickTrainerPanel(clientId) {
     grid.innerHTML = "";
 
     if (trainerList.length === 0) {
-      grid.innerHTML = `<p style="color:${ui.muted};padding:8px 0">No trainers match your filters.</p>`;
+      grid.innerHTML = `<p style="grid-column:1/-1;color:${ui.muted}">No trainers match your filters.</p>`;
       return;
     }
 
@@ -4958,7 +5167,6 @@ async function _loadPickTrainerPanel(clientId) {
                     (Number(t.rating) % 1 >= 0.5 ? "\u00BD" : "");
       const card = document.createElement("div");
       card.style.cssText = `
-        flex:0 0 340px;min-width:340px;
         background:${ui.cardBg};border:${ui.cardBorder};
         border-radius:14px;padding:24px;cursor:pointer;transition:0.4s;
         box-shadow:${ui.cardShadow};position:relative;overflow:hidden;
@@ -5255,11 +5463,36 @@ async function _loadPickTrainerPanel(clientId) {
     }
   }
 
+  function renderSummaryCards(trainerList) {
+    const box = document.getElementById("pt-summary");
+    if (!box) return;
+    const available = trainerList.filter(t => !(capacityMap[t.id] || {}).full).length;
+    const linked = trainerList.filter(t => hiredIds.includes(t.id)).length;
+    const pending = trainerList.filter(t => (sentInvites[t.id] || {}).status === "pending").length;
+    const summaryItem = (label, value) => `
+      <div style="padding:12px;border-radius:11px;border:${ui.statsBorder};background:${ui.statsBg}">
+        <div style="font-size:0.64rem;letter-spacing:0.13em;text-transform:uppercase;color:${ui.cardSubtle}">${label}</div>
+        <div style="margin-top:4px;font-family:'Orbitron',monospace;font-size:1.1rem;color:${ui.heading};font-weight:900">${value}</div>
+      </div>`;
+    box.innerHTML =
+      summaryItem("Available", available) +
+      summaryItem("Linked", linked) +
+      summaryItem("Pending Invites", pending);
+  }
+
   function applyFilters() {
     const specFilter = document.getElementById("pt-filter-specialty").value;
     const sortBy = document.getElementById("pt-sort").value;
+    const searchQ = String(document.getElementById("pt-search")?.value || "").trim().toLowerCase();
 
     let filtered = [...trainers];
+
+    if (searchQ) {
+      filtered = filtered.filter(t => {
+        const hay = [t.name, t.specialty].concat(t.specialties || []).join(" ").toLowerCase();
+        return hay.includes(searchQ);
+      });
+    }
 
     // Filter by specialty
     if (specFilter !== "all") {
@@ -5287,24 +5520,64 @@ async function _loadPickTrainerPanel(clientId) {
         filtered.sort((a, b) => b.clients - a.clients);
         break;
     }
+    renderSummaryCards(filtered);
     return filtered;
   }
 
   // Event listeners for filters
+  document.getElementById("pt-search").addEventListener("input", () => renderTrainerCards(applyFilters()));
   document.getElementById("pt-filter-specialty").addEventListener("change", () => renderTrainerCards(applyFilters()));
   document.getElementById("pt-sort").addEventListener("change", () => renderTrainerCards(applyFilters()));
 
-  const ptGrid = document.getElementById("pt-trainer-grid");
-  const ptLeft = document.getElementById("pt-scroll-left");
-  const ptRight = document.getElementById("pt-scroll-right");
-  if (ptGrid && ptLeft && ptRight) {
-    const showArrows = () => { ptLeft.style.display = "flex"; ptRight.style.display = "flex"; };
-    const hideArrows = () => { ptLeft.style.display = "none"; ptRight.style.display = "none"; };
-    ptGrid.addEventListener("mouseenter", showArrows);
-    ptGrid.addEventListener("mouseleave", hideArrows);
-    ptLeft.addEventListener("click", () => ptGrid.scrollBy({ left: -340, behavior: "smooth" }));
-    ptRight.addEventListener("click", () => ptGrid.scrollBy({ left: 340, behavior: "smooth" }));
+  // Scroll controls
+  document.getElementById("pt-scroll-up")?.addEventListener("click", () => {
+    const grid = document.getElementById("pt-trainer-grid");
+    if (grid) grid.scrollBy({ top: -200, behavior: "smooth" });
+  });
+  document.getElementById("pt-scroll-down")?.addEventListener("click", () => {
+    const grid = document.getElementById("pt-trainer-grid");
+    if (grid) grid.scrollBy({ top: 200, behavior: "smooth" });
+  });
+
+  // Horizontal scroll with arrow buttons
+  const grid = document.getElementById("pt-trainer-grid");
+  const btnLeft = document.getElementById("pt-scroll-left");
+  const btnRight = document.getElementById("pt-scroll-right");
+  
+  if (grid && btnLeft && btnRight) {
+    // Show/hide arrow buttons on hover
+    grid.addEventListener("mouseenter", () => {
+      btnLeft.style.display = "flex";
+      btnRight.style.display = "flex";
+    });
+    grid.addEventListener("mouseleave", () => {
+      btnLeft.style.display = "none";
+      btnRight.style.display = "none";
+    });
+    
+    // Scroll on arrow button click
+    btnLeft.addEventListener("click", () => {
+      grid.scrollBy({ left: -340, behavior: "smooth" });
+    });
+    btnRight.addEventListener("click", () => {
+      grid.scrollBy({ left: 340, behavior: "smooth" });
+    });
+    
+    // Show hover effect on arrow buttons
+    btnLeft.addEventListener("mouseenter", function() {
+      this.style.background = "rgba(230,57,70,0.35)";
+    });
+    btnLeft.addEventListener("mouseleave", function() {
+      this.style.background = "rgba(230,57,70,0.15)";
+    });
+    btnRight.addEventListener("mouseenter", function() {
+      this.style.background = "rgba(230,57,70,0.35)";
+    });
+    btnRight.addEventListener("mouseleave", function() {
+      this.style.background = "rgba(230,57,70,0.15)";
+    });
   }
+
 
   // Initial render
   renderTrainerCards(applyFilters());
@@ -5323,7 +5596,30 @@ async function _loadTrainerClassesPanel(trainerUid, trainerName) {
   };
 
   panel.innerHTML = `<div style="text-align:center;padding:40px;opacity:0.5">Loading classes…</div>`;
-  const classes = await getTrainerClasses(trainerUid);
+
+  // Merge trainer's own classes (ordered query) with admin-created classes assigned to this
+  // trainer (fetched via getClasses, which returns all isPublic:true records).  This guards
+  // against Firebase ordered-query rule evaluation silently dropping records.
+  let classes;
+  try {
+    const [trainerOwn, allPublic] = await Promise.all([
+      getTrainerClasses(trainerUid).catch(() => []),
+      getClasses().catch(() => [])
+    ]);
+    const seen = new Set();
+    classes = [];
+    for (const c of [...trainerOwn, ...allPublic.filter(c => c.trainerId === trainerUid)]) {
+      if (!seen.has(c.id)) { seen.add(c.id); classes.push(c); }
+    }
+    classes.sort((a, b) => {
+      const di = DAYS.indexOf(a.day) - DAYS.indexOf(b.day);
+      return di !== 0 ? di : (a.time || "").localeCompare(b.time || "");
+    });
+  } catch (e) {
+    panel.innerHTML = `<h2 style="color:#0887e2">My Classes</h2><p style="color:#ff0033">${e.message}</p>`;
+    return;
+  }
+
   const counts = {};
   for (const c of classes) counts[c.id] = await getClassBookingCount(c.id);
 
@@ -5704,7 +6000,10 @@ async function initTrainerPage() {
     _bindCardToPanel("card-workout-builder","panel-workout-builder");
     _bindCardToPanel("card-membership",     "panel-membership");
     _bindCardToPanel("card-client-progress","panel-clients");
-    _bindCardToPanel("card-store",          "panel-share-code");
+    _bindCardToPanel("card-store",          "panel-cart");
+    document.querySelectorAll('.nav-item[data-panel="panel-cart"]').forEach(item => {
+      item.addEventListener('click', () => _loadTrainerStorePanel(user.uid));
+    });
     _bindCardToPanel("card-classes",         "panel-classes");
     _bindCardToPanel("card-messenger",        "panel-messenger");
     _bindCardToPanel("card-settings",       "panel-settings");
@@ -5790,17 +6089,217 @@ async function initTrainerPage() {
   }
 }
 
+async function _loadTrainerStorePanel(trainerUid) {
+  const panel = document.getElementById("panel-cart");
+  if (!panel) return;
+
+  panel.innerHTML = `<h2 style="color:#0887e2">Trainer Store</h2><p style="opacity:0.6">Loading store analytics...</p>`;
+
+  try {
+    const [clients, storeItems, recommendations] = await Promise.all([
+      getTrainerHiredClients(trainerUid).catch(() => []),
+      getAllStoreItems().catch(() => []),
+      getTrainerStoreRecommendations(trainerUid).catch(() => [])
+    ]);
+
+    const purchasesByClient = await Promise.all(
+      clients.map(async (client) => ({
+        client,
+        purchases: await getClientStorePurchases(client.id).catch(() => [])
+      }))
+    );
+
+    const allPurchases = purchasesByClient.flatMap(({ client, purchases }) =>
+      purchases.map((purchase) => ({
+        ...purchase,
+        clientId: client.id,
+        clientName: client.name || client.displayName || client.email || "Client"
+      }))
+    ).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+
+    const itemStats = {};
+    allPurchases.forEach((purchase) => {
+      (purchase.items || []).forEach((item) => {
+        const key = item.id || item.name || "unknown";
+        if (!itemStats[key]) {
+          itemStats[key] = { name: item.name || "Item", qty: 0, revenue: 0 };
+        }
+        itemStats[key].qty += Number(item.qty) || 0;
+        itemStats[key].revenue += (Number(item.qty) || 0) * (Number(item.price) || 0);
+      });
+    });
+
+    const topItems = Object.values(itemStats).sort((a, b) => {
+      if (b.qty !== a.qty) return b.qty - a.qty;
+      return b.revenue - a.revenue;
+    });
+
+    const uniqueBuyingClients = new Set(allPurchases.map((p) => p.clientId));
+    const totalRevenue = allPurchases.reduce((sum, p) => sum + (Number(p.total) || 0), 0);
+
+    panel.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px">
+        <h2 style="color:#0887e2;margin:0">Trainer Store</h2>
+        <button id="trainer-store-view-profile" style="padding:8px 16px;border:1px solid rgba(8,135,226,0.45);border-radius:8px;background:rgba(8,135,226,0.08);color:#0887e2;cursor:pointer;font-size:0.82rem">View Profile</button>
+      </div>
+
+      <div style="display:grid;grid-template-columns:repeat(3,minmax(170px,1fr));gap:12px;margin-bottom:16px">
+        <div class="card" style="padding:12px;text-align:center">
+          <div style="font-size:0.68rem;opacity:0.55;letter-spacing:0.08em;text-transform:uppercase">Client Orders</div>
+          <div style="font-size:1.55rem;font-weight:800;color:#0887e2">${allPurchases.length}</div>
+        </div>
+        <div class="card" style="padding:12px;text-align:center">
+          <div style="font-size:0.68rem;opacity:0.55;letter-spacing:0.08em;text-transform:uppercase">Clients Buying</div>
+          <div style="font-size:1.55rem;font-weight:800;color:#00c853">${uniqueBuyingClients.size}</div>
+        </div>
+        <div class="card" style="padding:12px;text-align:center">
+          <div style="font-size:0.68rem;opacity:0.55;letter-spacing:0.08em;text-transform:uppercase">Store Revenue</div>
+          <div style="font-size:1.55rem;font-weight:800;color:#e96d25">$${totalRevenue.toFixed(2)}</div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:16px">
+        <h3 style="margin-bottom:10px">Recommend Item To Client</h3>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <select id="ts-client" style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:inherit;font-family:inherit">
+            <option value="">— Select client —</option>
+            ${clients.map(c => `<option value="${c.id}">${c.name || c.displayName || c.email || c.id}</option>`).join("")}
+          </select>
+          <select id="ts-item" style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:inherit;font-family:inherit">
+            <option value="">— Select store item —</option>
+            ${storeItems.map(i => `<option value="${i.id}">${i.name} · $${Number(i.price || 0).toFixed(2)}</option>`).join("")}
+          </select>
+        </div>
+        <textarea id="ts-note" placeholder="Recommendation note for the client" style="margin-top:10px;width:100%;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:inherit;font-family:inherit;min-height:78px"></textarea>
+        <button id="ts-send" style="margin-top:10px;padding:9px 18px;border:none;border-radius:8px;background:linear-gradient(90deg,#0887e2,#006af5);color:#fff;cursor:pointer;font-weight:700">Send Recommendation</button>
+      </div>
+
+      <div class="card" style="margin-bottom:16px">
+        <h3 style="margin-bottom:10px">What Your Clients Are Buying</h3>
+        ${allPurchases.length === 0 ? `<p style="opacity:0.6">No client store purchases recorded yet.</p>` : allPurchases.slice(0, 20).map(p => `
+          <div style="padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.03);margin-bottom:8px">
+            <div style="display:flex;justify-content:space-between;gap:10px;align-items:center">
+              <strong>${p.clientName}</strong>
+              <span style="opacity:0.55;font-size:0.78rem">${formatDate(p.createdAt)}</span>
+            </div>
+            <div style="opacity:0.85;margin-top:4px">${(p.items || []).map(i => `${i.name} × ${i.qty}`).join(", ") || p.summary || "Purchase"}</div>
+            <div style="opacity:0.65;font-size:0.8rem;margin-top:4px">Total: $${Number(p.total || 0).toFixed(2)}</div>
+          </div>
+        `).join("")}
+      </div>
+
+      <div class="card" style="margin-bottom:16px">
+        <h3 style="margin-bottom:10px">Top Bought Items</h3>
+        ${topItems.length === 0 ? `<p style="opacity:0.6">No item sales data yet.</p>` : topItems.slice(0, 12).map(item => `
+          <div style="display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.08)">
+            <span>${item.name}</span>
+            <span style="opacity:0.7">${item.qty} sold · $${item.revenue.toFixed(2)}</span>
+          </div>
+        `).join("")}
+      </div>
+
+      <div class="card">
+        <h3 style="margin-bottom:10px">Sent Recommendations</h3>
+        ${recommendations.length === 0 ? `<p style="opacity:0.6">No recommendations sent yet.</p>` : recommendations.slice(0, 20).map(r => {
+          const target = clients.find(c => c.id === r.clientId);
+          return `<div style="padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.08)"><strong>${target ? (target.name || target.displayName || target.email) : "Client"}</strong> · ${r.itemName || "Item"}${r.note ? `<div style="opacity:0.7;margin-top:2px">${r.note}</div>` : ""}<div style="opacity:0.5;font-size:0.78rem">${formatDate(r.createdAt)}</div></div>`;
+        }).join("")}
+      </div>
+    `;
+
+    const profileBtn = document.getElementById("trainer-store-view-profile");
+    if (profileBtn) {
+      profileBtn.addEventListener("click", () => {
+        const home = document.getElementById("dashboard-home");
+        const panel = document.getElementById("panel-share-code");
+        if (home) home.style.display = "none";
+        document.querySelectorAll('.xgym-panel').forEach(p => p.style.display = "none");
+        if (panel) panel.style.display = "block";
+        if (typeof syncPanelBackButton === "function") {
+          setTimeout(syncPanelBackButton, 0);
+        }
+      });
+    }
+
+    const sendBtn = document.getElementById("ts-send");
+    if (sendBtn) {
+      sendBtn.addEventListener("click", async () => {
+        const clientId = document.getElementById("ts-client")?.value;
+        const itemId = document.getElementById("ts-item")?.value;
+        const note = (document.getElementById("ts-note")?.value || "").trim();
+        if (!clientId || !itemId) {
+          showToast("Select both client and item.", "error");
+          return;
+        }
+        const item = storeItems.find(i => i.id === itemId);
+        if (!item) {
+          showToast("Selected item no longer exists.", "error");
+          return;
+        }
+        sendBtn.disabled = true;
+        try {
+          await createTrainerStoreRecommendation(trainerUid, clientId, {
+            itemId,
+            itemName: item.name,
+            itemPrice: Number(item.price) || 0,
+            note
+          });
+          showToast("Recommendation sent.", "success");
+          _loadTrainerStorePanel(trainerUid);
+        } catch (e) {
+          showToast(e.message, "error");
+        } finally {
+          sendBtn.disabled = false;
+        }
+      });
+    }
+  } catch (e) {
+    panel.innerHTML = `<h2 style="color:#0887e2">Trainer Store</h2><p style="color:#ff0033">${e.message}</p>`;
+  }
+}
+
 async function _loadTrainerShareCodePanel(trainerUid, shareCode) {
   const panel = document.getElementById("panel-share-code");
   if (!panel) return;
 
   const me = await getUserProfile(trainerUid);
   const reviews = await getTrainerReviews(trainerUid);
+  const wh = await getTrainerWorkingHours(trainerUid);
+
+  const DAYS_WH = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
+  const whApproved = wh.approved;
+  const whHours = wh.hours || {};
+
+  const whRowStyle = `display:grid;grid-template-columns:90px 1fr 1fr 40px;gap:8px;align-items:center;margin-bottom:6px`;
+  const timeInputStyle = `padding:7px 10px;border-radius:7px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:inherit;font-family:inherit;width:100%;box-sizing:border-box`;
+
+  const whRows = DAYS_WH.map(day => {
+    const entry = whHours[day] || {};
+    const active = entry.active !== false && (entry.start || entry.end);
+    return `<div style="${whRowStyle}">
+      <label style="font-size:0.82rem;opacity:0.7;display:flex;align-items:center;gap:6px">
+        <input type="checkbox" class="wh-active" data-day="${day}" ${active ? "checked" : ""}
+          style="width:14px;height:14px;cursor:pointer">
+        <span>${day.slice(0,3)}</span>
+      </label>
+      <input type="time" class="wh-start" data-day="${day}"
+        value="${entry.start || "09:00"}" style="${timeInputStyle}" ${!active ? "disabled" : ""}>
+      <input type="time" class="wh-end" data-day="${day}"
+        value="${entry.end || "17:00"}" style="${timeInputStyle}" ${!active ? "disabled" : ""}>
+      <span style="font-size:0.72rem;opacity:0.4">to</span>
+    </div>`;
+  }).join("");
+
+  const approvalBadge = whApproved
+    ? `<span style="background:rgba(0,200,83,0.15);color:#00c853;border:1px solid rgba(0,200,83,0.3);padding:3px 10px;border-radius:8px;font-size:0.75rem;font-weight:600">✓ Approved by Admin</span>`
+    : Object.keys(whHours).length
+      ? `<span style="background:rgba(233,109,37,0.15);color:#e96d25;border:1px solid rgba(233,109,37,0.3);padding:3px 10px;border-radius:8px;font-size:0.75rem;font-weight:600">⏳ Pending Admin Approval</span>`
+      : `<span style="opacity:0.4;font-size:0.75rem">Not set yet</span>`;
 
   panel.innerHTML = `
     <h2 style="color:#0887e2">Trainer Profile</h2>
     <div class="card" style="margin-bottom:16px">
-      <p>Give this code to clients so they can find you:</p>
+      <p>Share this code in your store page so clients can find and follow your referrals:</p>
       <div style="font-size:2rem;font-weight:900;letter-spacing:6px;color:#0887e2;margin:14px 0">
         ${shareCode || "N/A"}
       </div>
@@ -5845,6 +6344,16 @@ async function _loadTrainerShareCodePanel(trainerUid, shareCode) {
       <button id="tp-save" style="margin-top:14px;padding:10px 24px;border:none;border-radius:8px;background:linear-gradient(90deg,#0887e2,#006af5);color:#fff;cursor:pointer;font-family:inherit;font-weight:600">Save Public Profile</button>
     </div>
 
+    <div class="card" style="margin-bottom:16px">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px">
+        <h3 style="margin:0">Working Hours</h3>
+        ${approvalBadge}
+      </div>
+      <p style="opacity:0.65;font-size:0.85rem;margin-bottom:14px">Set the days and hours you are available to take classes. An admin must approve before your hours are used for class scheduling.</p>
+      <div id="wh-rows-wrap">${whRows}</div>
+      <button id="tp-save-hours" style="margin-top:12px;padding:9px 22px;border:none;border-radius:8px;background:linear-gradient(90deg,#e96d25,#d45c10);color:#fff;cursor:pointer;font-family:inherit;font-weight:600;font-size:0.88rem">Save Working Hours</button>
+    </div>
+
     <div class="card">
       <h3 style="margin-bottom:10px">Client Reviews</h3>
       <div style="opacity:0.65;margin-bottom:10px">Average: <strong>${Number(me?.rating || 0).toFixed(1)}</strong> (${Number(me?.reviewCount || 0)} reviews)</div>
@@ -5881,6 +6390,42 @@ async function _loadTrainerShareCodePanel(trainerUid, shareCode) {
         maxClients: Number(document.getElementById("tp-maxclients").value || 10)
       });
       showToast("Trainer profile updated.", "success");
+      _loadTrainerShareCodePanel(trainerUid, shareCode);
+    } catch (e) {
+      showToast(e.message, "error");
+    }
+  });
+
+  // Wire working-hours checkbox toggles
+  panel.querySelectorAll(".wh-active").forEach(chk => {
+    chk.addEventListener("change", () => {
+      const day = chk.dataset.day;
+      const wrap = chk.closest("div");
+      wrap.querySelectorAll("input[type=time]").forEach(inp => { inp.disabled = !chk.checked; });
+    });
+  });
+
+  // Save working hours
+  document.getElementById("tp-save-hours").addEventListener("click", async () => {
+    const workingHours = {};
+    DAYS_WH.forEach(day => {
+      const activeChk = panel.querySelector(`.wh-active[data-day="${day}"]`);
+      const startInp = panel.querySelector(`.wh-start[data-day="${day}"]`);
+      const endInp   = panel.querySelector(`.wh-end[data-day="${day}"]`);
+      if (activeChk && activeChk.checked) {
+        const start = startInp ? startInp.value : "09:00";
+        const end   = endInp   ? endInp.value   : "17:00";
+        if (start && end && end > start) {
+          workingHours[day] = { start, end, active: true };
+        } else {
+          showToast(`${day}: end time must be after start time.`, "error");
+          return;
+        }
+      }
+    });
+    try {
+      await updateTrainerPublicProfile(trainerUid, { workingHours });
+      showToast("Working hours submitted for admin approval.", "success");
       _loadTrainerShareCodePanel(trainerUid, shareCode);
     } catch (e) {
       showToast(e.message, "error");
@@ -6648,18 +7193,20 @@ async function _loadTrainerWorkoutBuilderPanel(trainerUid) {
 
   document.getElementById("wb-add-exercise").addEventListener("click", () => {
     const row = document.createElement("div");
-    row.style.cssText = "display:grid;grid-template-columns:2fr 1fr 1fr 1fr 2fr auto;gap:8px;margin-bottom:10px;align-items:center";
+    row.style.cssText = "display:grid;grid-template-columns:1.6fr .85fr .85fr 1fr 2.2fr auto;gap:8px;margin-bottom:10px;align-items:center";
     row.innerHTML = `
       <input class="wb-ex-name" type="text" placeholder="Exercise name" style="${inputStyle}">
       <input class="wb-ex-sets" type="number" placeholder="Sets" style="${inputStyle}">
       <input class="wb-ex-reps" type="number" placeholder="Reps" style="${inputStyle}">
       <input class="wb-ex-weight" type="number" placeholder="Weight (lb)" style="${inputStyle}">
-      <input class="wb-ex-notes" type="text" placeholder="Notes (optional)" style="${inputStyle}">
+      <input class="wb-ex-description" type="text" placeholder="Exercise description / notes" style="${inputStyle}">
       <button class="wb-remove-ex" style="padding:4px 10px;border:none;border-radius:6px;
         background:rgba(255,0,51,0.3);color:#ff0033;cursor:pointer;font-size:0.9rem">×</button>`;
     document.getElementById("wb-exercises").appendChild(row);
     row.querySelector(".wb-remove-ex").addEventListener("click", () => row.remove());
   });
+
+  document.getElementById("wb-add-exercise").click();
 
   // View existing plans
   document.getElementById("wb-view-plans").addEventListener("click", async () => {
@@ -6681,7 +7228,7 @@ async function _loadTrainerWorkoutBuilderPanel(trainerUid) {
           background:rgba(8,135,226,0.15);color:#0887e2;font-size:0.72rem;font-weight:600;margin-left:8px">${p.category}</span>` : "";
         const exList = (p.exercises || []).map(ex =>
           `<span style="display:inline-block;margin:2px 4px;padding:3px 10px;border-radius:12px;
-           background:rgba(255,255,255,0.06);font-size:0.78rem">${ex.name} ${ex.sets}x${ex.reps}${ex.weight ? " @ " + ex.weight + "lb" : ""}</span>`).join("");
+           background:rgba(255,255,255,0.06);font-size:0.78rem">${ex.name} ${ex.sets}x${ex.reps}${ex.weight ? " @ " + ex.weight + "lb" : ""}${(ex.description || ex.notes) ? " · " + (ex.description || ex.notes) : ""}</span>`).join("");
         return `<div class="card" style="margin-bottom:10px;font-size:0.85rem">
           <div style="display:flex;justify-content:space-between;align-items:center">
             <span><strong>${p.day}</strong>${catBadge} — ${formatDate(p.createdAt)}</span>
@@ -6719,7 +7266,7 @@ async function _loadTrainerWorkoutBuilderPanel(trainerUid) {
         sets:   parseInt(row.querySelector(".wb-ex-sets").value) || 0,
         reps:   parseInt(row.querySelector(".wb-ex-reps").value) || 0,
         weight: parseFloat(row.querySelector(".wb-ex-weight").value) || 0,
-        notes:  row.querySelector(".wb-ex-notes").value.trim()
+        description: row.querySelector(".wb-ex-description").value.trim()
       });
     });
 
@@ -6728,6 +7275,12 @@ async function _loadTrainerWorkoutBuilderPanel(trainerUid) {
     try {
       await createWorkout(trainerUid, clientId, { day, category, exercises });
       showToast("Workout saved!", "success");
+      document.getElementById("wb-exercises").innerHTML = "";
+      document.getElementById("wb-add-exercise").click();
+      var plansContainer = document.getElementById("wb-existing-plans");
+      if (plansContainer && plansContainer.style.display === "block") {
+        document.getElementById("wb-view-plans").click();
+      }
     } catch (e) {
       showToast(e.message, "error");
     }
@@ -7093,6 +7646,29 @@ async function initAdminPage() {
 
   console.log("[X-Gym] initAdminPage: admin verified, setting up UI...");
 
+  // Background repair: ensure every class stored in Firebase is isPublic:true/source:admin
+  // so clients and trainers can always read them regardless of how they were created.
+  (async () => {
+    try {
+      const repairSnap = await db.ref("classes").once("value");
+      if (!repairSnap.exists()) return;
+      const updates = {};
+      repairSnap.forEach(child => {
+        const v = child.val() || {};
+        if (v.isPublic !== true || v.source !== "admin") {
+          updates["classes/" + child.key + "/isPublic"] = true;
+          updates["classes/" + child.key + "/source"]   = "admin";
+        }
+      });
+      if (Object.keys(updates).length) {
+        await db.ref().update(updates);
+        console.log("[X-Gym] admin init repair: fixed", Object.keys(updates).length / 2, "class record(s) → isPublic:true");
+      }
+    } catch (e) {
+      console.warn("[X-Gym] admin init repair failed:", e);
+    }
+  })();
+
   // Populate greeting
   const greeting = document.getElementById("admin-greeting");
   if (greeting) greeting.textContent = "Admin Panel \u2014 " + profile.name;
@@ -7425,7 +8001,24 @@ async function _loadAdminMembersPanel() {
         return;
       }
 
-      list.innerHTML = filtered.map(m => `
+      list.innerHTML = filtered.map(m => {
+        // Build trainer working hours summary for admin view
+        let trainerWhHtml = "";
+        if (m.role === "trainer") {
+          const whr = m.workingHours || {};
+          const approved = !!m.workingHoursApproved;
+          const dayKeys = Object.keys(whr).filter(d => whr[d] && whr[d].active !== false);
+          const whSummary = dayKeys.length
+            ? dayKeys.map(d => `${d.slice(0,3)} ${whr[d].start}–${whr[d].end}`).join(", ")
+            : null;
+          if (whSummary) {
+            const badge = approved
+              ? `<span style="background:rgba(0,200,83,0.15);color:#00c853;border:1px solid rgba(0,200,83,0.3);padding:2px 8px;border-radius:6px;font-size:0.72rem">✓ Approved</span>`
+              : `<span style="background:rgba(233,109,37,0.15);color:#e96d25;border:1px solid rgba(233,109,37,0.3);padding:2px 8px;border-radius:6px;font-size:0.72rem">⏳ Pending</span>`;
+            trainerWhHtml = `<div style="margin-top:6px;font-size:0.78rem;opacity:0.75">Hours: ${whSummary} ${badge}</div>`;
+          }
+        }
+        return `
         <div class="card" style="margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
           <div style="flex:1;min-width:200px">
             <h3 style="margin:0">${m.name || "Unknown"}</h3>
@@ -7437,8 +8030,15 @@ async function _loadAdminMembersPanel() {
             </span>
             <span style="margin-left:8px;opacity:0.5;font-size:0.8rem">Code: ${m.shareCode || "—"}</span>
             <span style="margin-left:8px;opacity:0.5;font-size:0.8rem">Joined: ${formatDate(m.createdAt)}</span>
+            ${trainerWhHtml}
           </div>
-          <div style="display:flex;gap:8px">
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            ${m.role === "trainer" && m.workingHours && Object.keys(m.workingHours).length && !m.workingHoursApproved
+              ? `<button class="admin-approve-hours" data-uid="${m.id}" data-name="${m.name || ""}"
+                  style="padding:7px 14px;border:none;border-radius:8px;background:rgba(0,200,83,0.3);color:#00c853;cursor:pointer;font-family:Poppins,sans-serif;font-size:0.82rem">
+                  ✓ Approve Hours
+                </button>`
+              : ""}
             <button class="admin-edit-member" data-uid="${m.id}" data-name="${m.name}" data-email="${m.email}" data-role="${m.role}"
               style="padding:7px 16px;border:none;border-radius:8px;background:rgba(255,255,255,0.1);color:#fff;cursor:pointer;font-family:Poppins,sans-serif">
               Edit
@@ -7453,7 +8053,31 @@ async function _loadAdminMembersPanel() {
             </button>
           </div>
         </div>
-      `).join("");
+      `}).join("");
+
+      // Approve working hours (trainer only)
+      list.querySelectorAll(".admin-approve-hours").forEach(btn => {
+        btn.addEventListener("click", async () => {
+          const uid = btn.dataset.uid;
+          const name = btn.dataset.name || "Trainer";
+          try {
+            btn.disabled = true;
+            btn.textContent = "Approving…";
+            await db.ref("users/" + uid).update({ workingHoursApproved: true });
+            showToast(`Working hours approved for ${name}.`, "success");
+            // Update local member record so re-render reflects new state
+            const mi = members.findIndex(x => x.id === uid);
+            if (mi !== -1) { members[mi].workingHoursApproved = true; }
+            const searchEl = document.getElementById("admin-member-search");
+            const roleEl   = document.getElementById("admin-member-role-filter");
+            renderMembers(searchEl ? searchEl.value.toLowerCase() : "", roleEl ? roleEl.value : "all");
+          } catch (e) {
+            showToast(e.message, "error");
+            btn.disabled = false;
+            btn.textContent = "✓ Approve Hours";
+          }
+        });
+      });
 
       // Edit buttons
       list.querySelectorAll(".admin-edit-member").forEach(btn => {
@@ -8273,57 +8897,256 @@ async function _loadAdminTrainerLinksPanel() {
   const panel = document.getElementById("panel-trainer-links");
   if (!panel) return;
 
-  panel.innerHTML = "<h2 style='color:#0887e2'>Trainer-Client Relationships</h2><p>Loading…</p>";
+  panel.innerHTML = "<h2 style='color:#0887e2'>Trainer Management</h2><p>Loading…</p>";
 
   try {
-    const [links, members] = await Promise.all([getAllTrainerClientLinks(), getAllMembers()]);
+    const [members, links] = await Promise.all([getAllMembers(), getAllTrainerClientLinks()]);
+    const trainers = members.filter(m => m.role === "trainer");
     const memberMap = {};
     members.forEach(m => { memberMap[m.id] = m; });
 
-    let html = `
-      <h2 style="color:#0887e2">Trainer-Client Relationships</h2>
-      <p style="opacity:0.6">${links.length} active link(s)</p>
-      <div id="admin-links-list"></div>
+    // Build per-trainer link count
+    const linksByTrainer = {};
+    links.forEach(l => {
+      if (!linksByTrainer[l.trainerId]) linksByTrainer[l.trainerId] = [];
+      linksByTrainer[l.trainerId].push(l);
+    });
+
+    const inputStyle = `padding:8px 11px;border-radius:7px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:inherit;font-family:inherit;font-size:0.85rem`;
+
+    panel.innerHTML = `
+      <h2 style="color:#0887e2;margin-bottom:4px">Trainer Management</h2>
+      <p style="opacity:0.55;margin-bottom:20px">${trainers.length} registered trainer${trainers.length === 1 ? "" : "s"} · ${links.length} active client link${links.length === 1 ? "" : "s"}</p>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:28px">
+        <div class="card" style="padding:16px;cursor:default">
+          <div style="font-size:1.6rem;font-weight:700;color:#e96d25">${trainers.length}</div>
+          <div style="font-size:0.75rem;opacity:0.55;margin-top:2px">Registered Trainers</div>
+        </div>
+        <div class="card" style="padding:16px;cursor:default">
+          <div style="font-size:1.6rem;font-weight:700;color:#00c853">${links.length}</div>
+          <div style="font-size:0.75rem;opacity:0.55;margin-top:2px">Trainer-Client Links</div>
+        </div>
+      </div>
+
+      <div id="atm-trainer-list"></div>
+
+      <div class="card" style="margin-top:24px">
+        <h3 style="margin-bottom:14px">Trainer-Client Links</h3>
+        <div id="atm-links-list">
+          ${links.length === 0 ? `<p style="opacity:0.5">No active links.</p>` :
+            links.map(link => {
+              const tr = memberMap[link.trainerId];
+              const cl = memberMap[link.clientId];
+              return `<div style="display:flex;align-items:center;justify-content:space-between;padding:9px 0;border-bottom:1px solid rgba(255,255,255,0.06)">
+                <span>
+                  <strong style="color:#e96d25">${tr ? (tr.name || tr.displayName || "Trainer") : link.trainerId}</strong>
+                  <span style="opacity:0.4;margin:0 8px">→</span>
+                  <strong style="color:#00c853">${cl ? (cl.name || cl.displayName || "Client") : link.clientId}</strong>
+                  <span style="opacity:0.4;font-size:0.75rem;margin-left:8px">Since ${formatDate(link.createdAt)}</span>
+                </span>
+                <button class="atm-del-link" data-id="${link.id}"
+                  style="padding:5px 12px;border:1px solid rgba(255,0,60,0.4);border-radius:6px;background:transparent;color:#ff0033;cursor:pointer;font-size:0.75rem;font-family:inherit">
+                  Remove
+                </button>
+              </div>`;
+            }).join("")}
+        </div>
+      </div>
     `;
-    panel.innerHTML = html;
 
-    const list = document.getElementById("admin-links-list");
-    if (links.length === 0) {
-      list.innerHTML = "<p>No trainer-client links yet.</p>";
-    } else {
-      list.innerHTML = links.map(link => {
-        const trainer = memberMap[link.trainerId];
-        const client  = memberMap[link.clientId];
-        return `
-          <div class="card" style="margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
-            <div>
-              <strong style="color:#e96d25">${trainer ? trainer.name : link.trainerId}</strong>
-              <span style="opacity:0.5;margin:0 8px">→</span>
-              <strong style="color:#00c850">${client ? client.name : link.clientId}</strong>
-              <span style="margin-left:12px;opacity:0.5;font-size:0.8rem">Since ${formatDate(link.createdAt)}</span>
+    // Build per-trainer accordion cards
+    const trainerListEl = document.getElementById("atm-trainer-list");
+
+    function renderTrainerCards() {
+      trainerListEl.innerHTML = trainers.map(t => {
+        const whr = t.workingHours || {};
+        const approved = !!t.workingHoursApproved;
+        const dayKeys = Object.keys(whr).filter(d => whr[d] && whr[d].active !== false);
+        const whSummary = dayKeys.length
+          ? dayKeys.map(d => `${d.slice(0,3)} ${whr[d].start}–${whr[d].end}`).join(", ")
+          : null;
+        const badge = approved
+          ? `<span style="background:rgba(0,200,83,0.15);color:#00c853;border:1px solid rgba(0,200,83,0.3);padding:2px 8px;border-radius:6px;font-size:0.72rem">✓ Hours Approved</span>`
+          : whSummary
+            ? `<span style="background:rgba(233,109,37,0.15);color:#e96d25;border:1px solid rgba(233,109,37,0.3);padding:2px 8px;border-radius:6px;font-size:0.72rem">⏳ Pending Approval</span>`
+            : `<span style="opacity:0.35;font-size:0.72rem">No hours set</span>`;
+        const clientCount = (linksByTrainer[t.id] || []).length;
+        const clientLinks = (linksByTrainer[t.id] || []).map(l => {
+          const cl = memberMap[l.clientId];
+          return cl ? (cl.name || cl.displayName || "Client") : l.clientId;
+        });
+
+        return `<div class="card atm-trainer-card" data-uid="${t.id}" style="margin-bottom:14px">
+          <div class="atm-card-header" data-uid="${t.id}"
+            style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;cursor:pointer">
+            <div style="display:flex;align-items:center;gap:14px;flex:1;min-width:0">
+              <div style="width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,#0887e2,#006af5);
+                display:flex;align-items:center;justify-content:center;font-weight:700;font-size:1rem;flex-shrink:0">
+                ${(t.name || "T")[0].toUpperCase()}
+              </div>
+              <div style="min-width:0">
+                <div style="font-weight:700;font-size:0.95rem">${t.name || t.displayName || "Trainer"}</div>
+                <div style="opacity:0.55;font-size:0.78rem;margin-top:1px">${t.email || ""} · ${clientCount} client${clientCount === 1 ? "" : "s"}</div>
+                ${whSummary ? `<div style="opacity:0.6;font-size:0.74rem;margin-top:2px">${whSummary}</div>` : ""}
+              </div>
             </div>
-            <button class="admin-delete-link" data-id="${link.id}"
-              style="padding:7px 16px;border:none;border-radius:8px;background:rgba(255,0,60,0.5);color:#fff;cursor:pointer;font-family:Poppins,sans-serif">
-              Remove
-            </button>
+            <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
+              ${badge}
+              <span class="atm-arrow" data-uid="${t.id}" style="opacity:0.4;transition:transform 0.2s;font-size:0.8rem">▼</span>
+            </div>
           </div>
-        `;
-      }).join("");
+          <div class="atm-card-body" id="atm-body-${t.id}" style="display:none;border-top:1px solid rgba(255,255,255,0.08);margin-top:14px;padding-top:14px">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
+              <div>
+                <div style="font-size:0.72rem;opacity:0.5;margin-bottom:4px">Specialty</div>
+                <input class="atm-specialty" data-uid="${t.id}" type="text" value="${(t.specialty||"").replace(/"/g,"&quot;")}" placeholder="e.g. Strength & Conditioning" style="${inputStyle};width:100%;box-sizing:border-box">
+              </div>
+              <div>
+                <div style="font-size:0.72rem;opacity:0.5;margin-bottom:4px">Accent Colour</div>
+                <input class="atm-color" data-uid="${t.id}" type="color" value="${t.accentColor || "#0887e2"}" style="width:100%;height:38px;border-radius:7px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);cursor:pointer">
+              </div>
+            </div>
+            ${whSummary
+              ? `<div style="margin-bottom:14px">
+                  <div style="font-size:0.72rem;opacity:0.5;margin-bottom:6px">Working Hours</div>
+                  <div style="font-size:0.82rem;background:rgba(255,255,255,0.04);border-radius:8px;padding:10px 12px;border:1px solid rgba(255,255,255,0.08)">${whSummary}</div>
+                </div>`
+              : ""}
+            ${clientLinks.length
+              ? `<div style="margin-bottom:14px">
+                  <div style="font-size:0.72rem;opacity:0.5;margin-bottom:4px">Linked Clients</div>
+                  <div style="font-size:0.82rem;opacity:0.75">${clientLinks.join(", ")}</div>
+                </div>`
+              : ""}
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              ${whSummary && !approved
+                ? `<button class="atm-approve-hours" data-uid="${t.id}"
+                    style="padding:7px 16px;border:none;border-radius:8px;background:rgba(0,200,83,0.25);color:#00c853;cursor:pointer;font-family:inherit;font-size:0.82rem">
+                    ✓ Approve Working Hours
+                  </button>`
+                : ""}
+              ${approved
+                ? `<button class="atm-revoke-hours" data-uid="${t.id}"
+                    style="padding:7px 16px;border:none;border-radius:8px;background:rgba(255,255,255,0.07);color:#e96d25;cursor:pointer;font-family:inherit;font-size:0.82rem">
+                    Revoke Approval
+                  </button>`
+                : ""}
+              <button class="atm-save-settings" data-uid="${t.id}"
+                style="padding:7px 16px;border:none;border-radius:8px;background:linear-gradient(90deg,#0887e2,#006af5);color:#fff;cursor:pointer;font-family:inherit;font-size:0.82rem">
+                Save Settings
+              </button>
+              <button class="atm-delete-trainer" data-uid="${t.id}" data-name="${(t.name||"Trainer").replace(/"/g,"&quot;")}"
+                style="padding:7px 14px;border:1px solid rgba(255,0,60,0.35);border-radius:8px;background:transparent;color:#ff0033;cursor:pointer;font-family:inherit;font-size:0.82rem;margin-left:auto">
+                Remove Trainer
+              </button>
+            </div>
+          </div>
+        </div>`;
+      }).join("") || `<div class="card" style="text-align:center;padding:30px;opacity:0.5">No trainers registered yet.</div>`;
 
-      list.querySelectorAll(".admin-delete-link").forEach(btn => {
-        btn.addEventListener("click", () => {
-          showModal("Remove Link", "<p>Remove this trainer-client relationship?</p>", async () => {
-            try {
-              await deleteTrainerClientLink(btn.dataset.id);
-              showToast("Link removed.", "success");
-              _loadAdminTrainerLinksPanel();
-            } catch (e) { showToast(e.message, "error"); }
-          });
+      // Accordion toggles
+      trainerListEl.querySelectorAll(".atm-card-header").forEach(header => {
+        header.addEventListener("click", () => {
+          const uid = header.dataset.uid;
+          const body  = document.getElementById("atm-body-" + uid);
+          const arrow = trainerListEl.querySelector(`.atm-arrow[data-uid="${uid}"]`);
+          if (!body) return;
+          const open = body.style.display !== "none";
+          body.style.display  = open ? "none" : "block";
+          if (arrow) arrow.style.transform = open ? "" : "rotate(180deg)";
+        });
+      });
+
+      // Approve working hours
+      trainerListEl.querySelectorAll(".atm-approve-hours").forEach(btn => {
+        btn.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          btn.disabled = true; btn.textContent = "Approving…";
+          try {
+            await db.ref("users/" + btn.dataset.uid).update({ workingHoursApproved: true });
+            const mi = members.findIndex(m => m.id === btn.dataset.uid);
+            if (mi !== -1) { members[mi].workingHoursApproved = true; trainers[trainers.findIndex(t => t.id === btn.dataset.uid)].workingHoursApproved = true; }
+            showToast("Working hours approved.", "success");
+            renderTrainerCards();
+          } catch(e) { showToast(e.message, "error"); btn.disabled = false; btn.textContent = "✓ Approve Working Hours"; }
+        });
+      });
+
+      // Revoke approval
+      trainerListEl.querySelectorAll(".atm-revoke-hours").forEach(btn => {
+        btn.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          btn.disabled = true; btn.textContent = "Revoking…";
+          try {
+            await db.ref("users/" + btn.dataset.uid).update({ workingHoursApproved: false });
+            const ti = trainers.findIndex(t => t.id === btn.dataset.uid);
+            if (ti !== -1) trainers[ti].workingHoursApproved = false;
+            showToast("Approval revoked.", "success");
+            renderTrainerCards();
+          } catch(e) { showToast(e.message, "error"); btn.disabled = false; btn.textContent = "Revoke Approval"; }
+        });
+      });
+
+      // Save settings (specialty + accent colour)
+      trainerListEl.querySelectorAll(".atm-save-settings").forEach(btn => {
+        btn.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          const uid = btn.dataset.uid;
+          const specialtyEl = trainerListEl.querySelector(`.atm-specialty[data-uid="${uid}"]`);
+          const colorEl     = trainerListEl.querySelector(`.atm-color[data-uid="${uid}"]`);
+          btn.disabled = true; btn.textContent = "Saving…";
+          try {
+            await db.ref("users/" + uid).update({
+              specialty: (specialtyEl ? specialtyEl.value.trim() : ""),
+              accentColor: (colorEl ? colorEl.value : "#0887e2")
+            });
+            const ti = trainers.findIndex(t => t.id === uid);
+            if (ti !== -1) {
+              if (specialtyEl) trainers[ti].specialty = specialtyEl.value.trim();
+              if (colorEl)     trainers[ti].accentColor = colorEl.value;
+            }
+            showToast("Trainer settings saved.", "success");
+          } catch(er) { showToast(er.message, "error"); }
+          finally { btn.disabled = false; btn.textContent = "Save Settings"; }
+        });
+      });
+
+      // Delete trainer
+      trainerListEl.querySelectorAll(".atm-delete-trainer").forEach(btn => {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          showModal("Remove Trainer",
+            `<p>Permanently remove <strong>${btn.dataset.name}</strong>? This also deletes all their data.</p>`,
+            async () => {
+              try {
+                await deleteMember(btn.dataset.uid);
+                showToast("Trainer removed.", "success");
+                _loadAdminTrainerLinksPanel();
+              } catch(er) { showToast(er.message, "error"); }
+            }
+          );
         });
       });
     }
-  } catch (e) {
-    panel.innerHTML = `<h2 style="color:#0887e2">Error</h2><p>${e.message}</p>`;
+
+    renderTrainerCards();
+
+    // Remove link buttons
+    panel.querySelectorAll(".atm-del-link").forEach(btn => {
+      btn.addEventListener("click", () => {
+        showModal("Remove Link", "<p>Remove this trainer-client relationship?</p>", async () => {
+          try {
+            await deleteTrainerClientLink(btn.dataset.id);
+            showToast("Link removed.", "success");
+            _loadAdminTrainerLinksPanel();
+          } catch(e) { showToast(e.message, "error"); }
+        });
+      });
+    });
+
+  } catch(e) {
+    panel.innerHTML = `<h2 style="color:#0887e2">Trainer Management</h2><p style="color:#ff0033">${e.message}</p>`;
   }
 }
 
@@ -9092,6 +9915,18 @@ async function _loadAdminClassesPanel() {
     return;
   }
 
+  // Auto-repair: any class that isn't explicitly public gets fixed so clients can read it.
+  // Firebase security rules filter out classes with isPublic:false for client accounts.
+  const repairPromises = classes
+    .filter(c => c.isPublic !== true || c.source !== "admin")
+    .map(c => db.ref("classes/" + c.id).update({ isPublic: true, source: "admin" }).catch(() => {}));
+  if (repairPromises.length) {
+    await Promise.all(repairPromises);
+    // Update local array to match
+    classes.forEach(c => { c.isPublic = true; c.source = "admin"; });
+    console.log("[X-Gym] Auto-repaired", repairPromises.length, "class(es) to isPublic:true / source:admin");
+  }
+
   const counts = {};
   for (const c of classes) counts[c.id] = await getClassBookingCount(c.id);
 
@@ -9197,7 +10032,7 @@ async function _loadAdminClassesPanel() {
 
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:24px">
       <div class="card" style="text-align:center;padding:16px;cursor:default">
-        <div style="font-size:1.8rem;font-weight:700;color:#0887e2">${classes.length}</div>
+        <div id="ac-stat-classes" style="font-size:1.8rem;font-weight:700;color:#0887e2">${classes.length}</div>
         <div style="font-size:0.78rem;opacity:0.6;margin-top:2px">Total Classes</div>
       </div>
       <div class="card" style="text-align:center;padding:16px;cursor:default">
@@ -9205,11 +10040,11 @@ async function _loadAdminClassesPanel() {
         <div style="font-size:0.78rem;opacity:0.6;margin-top:2px">Active Trainers</div>
       </div>
       <div class="card" style="text-align:center;padding:16px;cursor:default">
-        <div style="font-size:1.8rem;font-weight:700;color:#ff0033">${totalBooked}</div>
+        <div id="ac-stat-enrolled" style="font-size:1.8rem;font-weight:700;color:#ff0033">${totalBooked}</div>
         <div style="font-size:0.78rem;opacity:0.6;margin-top:2px">Total Enrolled</div>
       </div>
       <div class="card" style="text-align:center;padding:16px;cursor:default">
-        <div style="font-size:1.8rem;font-weight:700;color:#00c853">${fillRate}%</div>
+        <div id="ac-stat-fillrate" style="font-size:1.8rem;font-weight:700;color:#00c853">${fillRate}%</div>
         <div style="font-size:0.78rem;opacity:0.6;margin-top:2px">Fill Rate</div>
       </div>
     </div>
@@ -9226,15 +10061,16 @@ async function _loadAdminClassesPanel() {
           <select id="ac-type" style="${inputStyle}"><option value="">— Type —</option>${typeOpts}</select>
           <select id="ac-trainer" style="${inputStyle}"><option value="">— Trainer —</option>${trainerOpts}</select>
         </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px;margin-bottom:12px">
-          <select id="ac-day" style="${inputStyle}"><option value="">— Day —</option>${DAYS.map((d, i) => `<option value="${d}" ${i === 0 ? "selected" : ""}>${d}</option>`).join("")}</select>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px;margin-bottom:6px">
+          <select id="ac-day" style="${inputStyle}">${dayOpts}</select>
           <input id="ac-time" type="time" style="${inputStyle}">
           <input id="ac-duration" type="number" min="15" max="180" placeholder="Duration (min)" value="60" style="${inputStyle}">
           <input id="ac-capacity" type="number" min="1" placeholder="Capacity" value="20" style="${inputStyle}">
         </div>
+        <div id="ac-wh-hint" style="font-size:0.78rem;min-height:18px;margin-bottom:8px;padding-left:2px;opacity:0.7"></div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
           <input id="ac-location" type="text" placeholder="Location (e.g. Studio A)" style="${inputStyle}">
-          <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:0.88rem;opacity:0.8">
+          <label style="display:flex;align-items:center;gap:10px;font-size:0.88rem;opacity:0.8">
             <input id="ac-ispublic" type="checkbox" checked style="width:16px;height:16px;cursor:pointer">
             Public class (visible to all clients)
           </label>
@@ -9248,14 +10084,14 @@ async function _loadAdminClassesPanel() {
     </div>
 
     <div class="card" style="padding:20px">
-      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px">
-        <h3 style="margin:0">Weekly Schedule</h3>
-        <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+      <div style="display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:16px">
+        <h3 style="margin:0;flex-shrink:0;margin-right:6px">Weekly Schedule</h3>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;flex:1;min-width:0">${dayPills}</div>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;flex-shrink:0">
           ${trainerFilter}
           ${typeFilter}
         </div>
       </div>
-      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px">${dayPills}</div>
       <div id="ac-schedule">${buildCards("All", "", "All Types")}</div>
     </div>`;
 
@@ -9267,11 +10103,49 @@ async function _loadAdminClassesPanel() {
     document.getElementById("ac-form-arrow").style.transform = formOpen ? "rotate(180deg)" : "";
   });
 
+  // Working hours hint helper
+  const _whCache = {};
+  async function _showWhHint(hintEl, trainerId, day) {
+    if (!hintEl || !trainerId || !day) { if (hintEl) hintEl.textContent = ""; return; }
+    let whr;
+    if (_whCache[trainerId]) {
+      whr = _whCache[trainerId];
+    } else {
+      try { whr = await getTrainerWorkingHours(trainerId); _whCache[trainerId] = whr; } catch { whr = { hours: {}, approved: false }; }
+    }
+    const entry = whr.hours[day];
+    if (!entry || !entry.active) {
+      hintEl.innerHTML = `<span style="color:#e96d25">⚠ No working hours set for ${day}</span>`;
+    } else if (!whr.approved) {
+      hintEl.innerHTML = `<span style="color:#e96d25">⚠ Hours not yet approved — ${whr.name || "Trainer"}: ${entry.start}–${entry.end}</span>`;
+    } else {
+      hintEl.innerHTML = `<span style="color:#00c853">✓ ${whr.name || "Trainer"} available ${entry.start}–${entry.end} on ${day}</span>`;
+    }
+  }
+
+  // Hint wiring for create form
+  const acTrainer = document.getElementById("ac-trainer");
+  const acDay     = document.getElementById("ac-day");
+  const acWhHint  = document.getElementById("ac-wh-hint");
+  const _updateCreateHint = () => _showWhHint(acWhHint, acTrainer.value, acDay.value);
+  acTrainer.addEventListener("change", _updateCreateHint);
+  acDay.addEventListener("change", _updateCreateHint);
+
   let activeDay = "All", activeTrainer = "", activeType = "All Types";
 
   function refresh() {
     document.getElementById("ac-schedule").innerHTML = buildCards(activeDay, activeTrainer, activeType);
     bindAdminClassBtns();
+    // Update stats
+    const totalBooked2 = Object.values(counts).reduce((s, n) => s + n, 0);
+    const totalCap2 = classes.reduce((s, c) => s + (c.capacity || 20), 0);
+    const fillRate2 = totalCap2 ? Math.round((totalBooked2 / totalCap2) * 100) : 0;
+    const scEl = document.getElementById("ac-stat-classes");
+    const seEl = document.getElementById("ac-stat-enrolled");
+    const sfEl = document.getElementById("ac-stat-fillrate");
+    if (scEl) scEl.textContent = classes.length;
+    if (seEl) seEl.textContent = totalBooked2;
+    if (sfEl) sfEl.textContent = fillRate2 + "%";
   }
 
   panel.querySelectorAll(".ac-day-pill").forEach(pill => {
@@ -9358,8 +10232,9 @@ async function _loadAdminClassesPanel() {
             <input id="ac-edit-duration" type="number" min="15" max="180" value="${btn.dataset.duration || 60}" placeholder="Duration (min)" style="${inputStyle}">
             <input id="ac-edit-cap" type="number" min="1" value="${btn.dataset.cap}" style="${inputStyle}">
           </div>
+          <div id="ac-edit-wh-hint" style="font-size:0.78rem;min-height:18px;padding-left:2px;opacity:0.7;margin-top:-4px"></div>
           <input id="ac-edit-location" value="${btn.dataset.location || ""}" placeholder="Location" style="${inputStyle}">
-          <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:0.88rem;opacity:0.8">
+          <label style="display:flex;align-items:center;gap:10px;font-size:0.88rem;opacity:0.6">
             <input id="ac-edit-ispublic" type="checkbox" ${btn.dataset.ispublic === "true" ? "checked" : ""} style="width:16px;height:16px">
             Public class
           </label>
@@ -9389,6 +10264,18 @@ async function _loadAdminClassesPanel() {
           showToast("Class updated!", "success");
           _loadAdminClassesPanel();
         });
+        // Wire working hours hint in edit modal after DOM renders
+        setTimeout(() => {
+          const editTrSel  = document.getElementById("ac-edit-trainer");
+          const editDaySel = document.getElementById("ac-edit-day");
+          const editHint   = document.getElementById("ac-edit-wh-hint");
+          if (editTrSel && editDaySel && editHint) {
+            const _updateEditHint = () => _showWhHint(editHint, editTrSel.value, editDaySel.value);
+            editTrSel.addEventListener("change", _updateEditHint);
+            editDaySel.addEventListener("change", _updateEditHint);
+            _updateEditHint(); // show hint for currently selected trainer+day
+          }
+        }, 80);
       });
     });
 
@@ -9412,7 +10299,7 @@ async function _loadAdminClassesPanel() {
   document.getElementById("ac-create-btn").addEventListener("click", async () => {
     const name = document.getElementById("ac-name").value.trim();
     const type = document.getElementById("ac-type").value || "General";
-    const day  = document.getElementById("ac-day").value.trim();
+    const day  = document.getElementById("ac-day").value;
     const time = document.getElementById("ac-time").value;
     const duration = parseInt(document.getElementById("ac-duration").value) || 60;
     const location = document.getElementById("ac-location").value.trim();
@@ -9423,13 +10310,25 @@ async function _loadAdminClassesPanel() {
     const trainerName = trainerSel.selectedOptions[0]?.dataset.name || "";
     const capacity = parseInt(document.getElementById("ac-capacity").value) || 20;
     if (!name) { showToast("Enter a class name.", "error"); return; }
-    if (!day) { showToast("Select a day.", "error"); return; }
     if (!time) { showToast("Select a time.", "error"); return; }
     if (!trainerId) { showToast("Select a trainer.", "error"); return; }
     try {
-      await createClass(trainerId, trainerName, { name, type, day, time, duration, capacity, location, description, isPublic });
+      const newKey = await createClass(trainerId, trainerName, { name, type, day, time, duration, capacity, location, description, isPublic });
       showToast("Class created! 🎉", "success");
-      _loadAdminClassesPanel();
+      // Optimistic local update — insert new card immediately without full re-fetch
+      const newClass = { id: newKey, trainerId, trainerName, name, day, time, duration, capacity, location, isPublic, type, description, source: isPublic ? "admin" : "trainer", createdAt: Date.now() };
+      classes.push(newClass);
+      classes.sort((a, b) => { const di = DAYS.indexOf(a.day) - DAYS.indexOf(b.day); return di !== 0 ? di : (a.time || "").localeCompare(b.time || ""); });
+      counts[newKey] = 0;
+      if (!activeDays.includes(day)) {
+        activeDays.length = 0;
+        DAYS.filter(d => classes.some(c => c.day === d)).forEach(d => activeDays.push(d));
+      }
+      refresh();
+      // Reset form fields after successful creation
+      document.getElementById("ac-name").value = "";
+      document.getElementById("ac-time").value = "";
+      document.getElementById("ac-description").value = "";
     } catch(e) { showToast(e.message, "error"); }
   });
 }
