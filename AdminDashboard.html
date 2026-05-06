@@ -4,708 +4,1004 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Admin Dashboard — The Gym</title>
-<link href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Exo+2:wght@200;300;400;600;700;900&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Exo+2:wght@200;300;400;600;700;900&family=Orbitron:wght@400;700;900&family=Noto+Serif+JP:wght@400;700;900&display=swap" rel="stylesheet">
 <style>
-:root {
-  --aura: #0887e2;
-  --aura2: #006af5;
-  --fire: #e96d25;
-  --gold: #ffd64a;
-  --white: #f1f9fe;
-  --black: #000d14;
-  --deep: #001220;
-    --border: 1px solid rgba(8,165,226,0.15);
-    --bg: rgba(0,18,32,0.9);
-    --page-bg: #000d14;
-    --sidebar-bg: rgba(0,18,32,0.85);
-    --sidebar-border: rgba(8,165,226,0.15);
-    --sidebar-shadow: 0 0 40px rgba(8,165,226,0.2);
-    --content-muted: rgba(241,249,254,0.55);
-    --card-border: rgba(8,165,226,0.15);
-    --card-shadow: 0 0 25px rgba(8,165,226,0.15);
-    --card-hover-shadow: 0 0 35px rgba(8,165,226,0.35);
-    --card-muted: rgba(241,249,254,0.6);
-    --nav-hover-shadow: 0 0 10px var(--aura);
-    --aura-opacity: 1;
-    --lightfx-opacity: 0;
+:root{
+  --red:#e63946;--red2:#c1121f;--fire:#ff6b35;
+  --white:#f0ece4;--grey:#888;--muted:rgba(240,236,228,0.5);
+  --page:#0f0f0f;--card:#181414;--card2:#1e1818;
+  --nav-bg:rgba(10,7,7,0.97);--nav-border:rgba(230,57,70,0.14);
+  --border:rgba(255,255,255,0.07);--shadow:0 2px 16px rgba(0,0,0,0.5);
 }
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--page);font-family:'Exo 2',sans-serif;color:var(--white);overflow-x:hidden;min-height:100vh}
+canvas.particle-layer{position:fixed;top:0;left:0;width:100vw;height:100vh;pointer-events:none;z-index:0}
+#p1{opacity:.1}#p2{opacity:.18}#p3{opacity:.32}
 
-*,*::before,*::after{margin:0;padding:0;box-sizing:border-box;}
-
-body {
-    margin: 0;
-    background: var(--page-bg);
-    font-family: 'Exo 2', sans-serif;
-    overflow-x: hidden;
-    color: var(--white);
-    transition: background 0.35s ease, color 0.35s ease;
+/* === TOP NAV (sidebar kept for BackendMain.js) === */
+.sidebar{
+  position:fixed;top:0;left:0;right:0;z-index:300;
+  height:60px;width:100%;
+  background:var(--nav-bg);
+  backdrop-filter:blur(24px);
+  border-bottom:1px solid var(--nav-border);
+  box-shadow:0 2px 24px rgba(0,0,0,0.6);
+  display:flex;flex-direction:row;align-items:center;
+  padding:0 22px;gap:8px;opacity:0;
 }
+.sidebar-logo{display:flex;align-items:center;gap:8px;flex-shrink:0;margin-right:6px}
+.logo-icon{width:30px;height:30px;background:linear-gradient(135deg,#e63946,#7b0d1e);border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:.9rem;box-shadow:0 0 14px rgba(230,57,70,.5);flex-shrink:0}
+.sidebar h2{font-family:'Orbitron',monospace;font-size:.9rem;letter-spacing:.14em;text-transform:uppercase;color:var(--white);white-space:nowrap}
+.role-badge,.admin-badge{padding:2px 9px;border-radius:3px;background:rgba(230,57,70,.12);border:1px solid rgba(230,57,70,.28);color:var(--red);font-family:'Orbitron',monospace;font-size:.48rem;font-weight:700;letter-spacing:.22em;flex-shrink:0}
+.nav-search-wrap{position:relative;flex:1;max-width:320px;margin:0 10px}
+.nav-search-wrap::before{content:'🔍';position:absolute;left:9px;top:50%;transform:translateY(-50%);font-size:.7rem;opacity:.35;pointer-events:none}
+.nav-search{width:100%;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.09);border-radius:8px;padding:7px 10px 7px 30px;color:var(--white);font-family:'Exo 2',sans-serif;font-size:.78rem;outline:none;transition:.2s}
+.nav-search:focus{border-color:rgba(230,57,70,.4)}
+.nav-search::placeholder{color:rgba(240,236,228,.28)}
+.nav-search.search-active{border-color:rgba(230,57,70,.55);box-shadow:0 0 0 1px rgba(230,57,70,.18)}
+.nav-items-scroll{display:flex;align-items:center;gap:1px;overflow-x:auto;scrollbar-width:none;flex:1}
+.nav-items-scroll::-webkit-scrollbar{display:none}
+.nav-item{margin:0;font-size:.72rem;opacity:.5;cursor:pointer;transition:.2s;display:flex;align-items:center;gap:5px;letter-spacing:.04em;padding:6px 9px;border-radius:5px;white-space:nowrap;position:relative;flex-shrink:0;border:none;background:transparent;color:var(--white)}
+.nav-item:hover,.nav-item.active{opacity:1;color:var(--red);background:rgba(230,57,70,.08)}
+.nav-item .nav-icon{font-size:.82rem}
+.notification-badge{display:inline-flex;align-items:center;justify-content:center;min-width:15px;height:15px;padding:0 4px;background:var(--red);color:#fff;font-size:.58rem;font-weight:700;border-radius:8px;box-shadow:0 0 7px rgba(230,57,70,.8);animation:notifPulse 2s ease-in-out infinite}
+.notification-badge.hidden{display:none}
+@keyframes notifPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.25)}}
+.nav-actions{display:flex;align-items:center;gap:7px;flex-shrink:0;margin-left:6px}
+.nav-btn{padding:6px 13px;border-radius:6px;font-family:'Exo 2',sans-serif;font-size:.74rem;font-weight:700;letter-spacing:.05em;cursor:pointer;transition:.2s;border:1px solid rgba(255,255,255,.14);background:transparent;color:var(--white)}
+.nav-btn:hover{background:rgba(255,255,255,.06)}
+.nav-btn.red-btn{background:var(--red);border-color:var(--red);color:#fff;box-shadow:0 0 12px rgba(230,57,70,.4)}
+.nav-btn.red-btn:hover{background:var(--red2);box-shadow:0 0 18px rgba(230,57,70,.6)}
+.theme-toggle{display:flex;align-items:center;gap:5px;background:rgba(230,57,70,.07);border:1px solid rgba(230,57,70,.2);border-radius:6px;color:var(--white);cursor:pointer;font-family:'Exo 2',sans-serif;font-size:.68rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:5px 9px;transition:.2s}
+.theme-toggle:hover{border-color:var(--red);box-shadow:0 0 10px rgba(230,57,70,.3)}
+.nav-avatar{width:30px;height:30px;border-radius:50%;background:linear-gradient(135deg,#c1121f,#e63946);display:flex;align-items:center;justify-content:center;font-size:.78rem;font-weight:700;color:#fff;flex-shrink:0;cursor:pointer;border:2px solid rgba(230,57,70,.4);margin-left:2px}
 
-/* Particle System */
-canvas.particle-layer {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100vw;
-    height: 100vh;
-    pointer-events: none;
-    z-index: -3;
+/* === MAIN CONTENT === */
+.content{margin-top:60px;opacity:0;position:relative;z-index:1}
+.content-header{display:none}
+.dashboard-home{padding:22px 26px}
+.panel-back-btn{position:fixed;top:76px;left:18px;z-index:450;display:none;align-items:center;justify-content:center;width:42px;height:42px;border-radius:12px;border:1px solid rgba(230,57,70,.34);background:rgba(10,7,7,.86);backdrop-filter:blur(16px);color:#fff;font-size:1.1rem;font-weight:900;cursor:pointer;box-shadow:0 8px 24px rgba(0,0,0,.28),0 0 0 1px rgba(255,255,255,.04) inset;transition:.2s}
+.panel-back-btn:hover{transform:translateY(-1px);border-color:rgba(230,57,70,.62);background:rgba(35,10,12,.94);box-shadow:0 10px 28px rgba(230,57,70,.16)}
+.panel-back-btn span{transform:translateX(-1px)}
+.win-notify-stack{position:fixed;right:16px;top:76px;z-index:520;display:flex;flex-direction:column;gap:10px;pointer-events:none;max-width:320px}
+.win-notify{display:flex;align-items:flex-start;gap:10px;padding:12px 13px;border-radius:14px;background:rgba(15,12,12,.9);border:1px solid rgba(230,57,70,.18);box-shadow:0 12px 28px rgba(0,0,0,.26),0 0 0 1px rgba(255,255,255,.04) inset;backdrop-filter:blur(18px);transform:translateX(120%);opacity:0;transition:transform .28s ease,opacity .28s ease;border-left:3px solid rgba(230,57,70,.9)}
+.win-notify.show{transform:translateX(0);opacity:1}
+.win-notify-bell{width:30px;height:30px;border-radius:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0;background:linear-gradient(135deg,rgba(230,57,70,.22),rgba(123,13,30,.28));color:#fff;font-size:.9rem;box-shadow:0 0 0 1px rgba(255,255,255,.04) inset}
+.win-notify-copy{min-width:0}
+.win-notify-title{font-size:.76rem;font-weight:800;letter-spacing:.04em;color:#fff;line-height:1.2;margin-bottom:2px}
+.win-notify-text{font-size:.69rem;line-height:1.35;color:rgba(255,255,255,.74)}
+.win-notify-count{margin-top:5px;display:inline-flex;align-items:center;gap:5px;padding:2px 7px;border-radius:999px;background:rgba(230,57,70,.14);color:#ffdfe2;font-size:.6rem;font-weight:700;letter-spacing:.05em}
+
+/* Two column layout */
+.dash-layout{display:grid;grid-template-columns:1fr 292px;gap:18px;align-items:start}
+.dash-main{min-width:0}
+
+/* Daily Overview Card */
+.overview-card{background:var(--card);border-radius:14px;border:1px solid var(--border);margin-bottom:18px;overflow:hidden}
+.ov-header{display:flex;align-items:flex-start;justify-content:space-between;padding:16px 18px 10px}
+.ov-title{font-family:'Noto Serif JP',serif;font-size:1.1rem;font-weight:700;color:var(--white);margin-bottom:2px}
+.ov-sub{font-size:.68rem;color:var(--muted);letter-spacing:.04em}
+.ov-btns{display:flex;gap:7px;flex-shrink:0}
+.ov-btn{padding:4px 11px;border-radius:5px;font-size:.68rem;font-weight:600;letter-spacing:.06em;cursor:pointer;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);color:var(--white);transition:.2s}
+.ov-btn:hover{background:rgba(230,57,70,.1);border-color:rgba(230,57,70,.3)}
+.ov-body{display:grid;grid-template-columns:232px 1fr;gap:0}
+.ov-art{margin:0 0 16px 16px;border-radius:10px;overflow:hidden;flex-shrink:0;position:relative}
+.ov-art img{width:232px;height:176px;object-fit:cover;filter:grayscale(30%) contrast(1.25) brightness(.85) sepia(12%);display:block}
+.ov-art-overlay{position:absolute;inset:0;background:linear-gradient(180deg,transparent 50%,rgba(10,5,5,.65) 100%)}
+.ov-info{padding:4px 16px 16px 14px;display:flex;flex-direction:column;gap:9px}
+.motd-box{background:rgba(255,255,255,.03);border-radius:9px;border:1px solid rgba(255,255,255,.06);padding:10px 12px}
+.motd-label{font-size:.58rem;letter-spacing:.2em;text-transform:uppercase;color:var(--red);margin-bottom:6px}
+.motd-inner{display:flex;align-items:center;gap:9px}
+.motd-avatar{width:36px;height:36px;border-radius:50%;object-fit:cover;border:2px solid rgba(230,57,70,.3);flex-shrink:0}
+.motd-name{font-size:.88rem;font-weight:700;color:var(--white)}
+.motd-stat{font-size:.65rem;color:var(--muted)}
+.quote-box{background:rgba(230,57,70,.04);border-left:2px solid var(--red);border-radius:0 7px 7px 0;padding:8px 12px}
+.quote-text{font-size:.74rem;font-style:italic;color:rgba(240,236,228,.7);line-height:1.5}
+.start-btn{display:inline-flex;align-items:center;gap:6px;padding:8px 18px;background:var(--red);border:none;border-radius:7px;color:#fff;font-family:'Exo 2',sans-serif;font-size:.76rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;cursor:pointer;transition:.2s;align-self:flex-start;box-shadow:0 3px 12px rgba(230,57,70,.4)}
+.start-btn:hover{background:var(--red2);transform:translateY(-1px);box-shadow:0 5px 16px rgba(230,57,70,.55)}
+
+/* Stats Row */
+.stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px}
+.stat-card{border-radius:11px;border:1px solid var(--border);padding:14px 14px 12px;position:relative;overflow:hidden;transition:.3s;cursor:pointer;display:flex;align-items:flex-start}
+/* top accent line */
+.stat-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,var(--red),transparent);z-index:2}
+/* full-card background image */
+.stat-card::after{content:'';position:absolute;inset:0;background-size:cover;background-position:center;filter:grayscale(60%) contrast(1.55) brightness(.22) sepia(45%);transition:.4s;z-index:0}
+/* strong veil + red tint for reliable readability regardless of image */
+.stat-card .stat-body{position:relative;z-index:1;flex:1;padding:10px 11px;border-radius:8px;background:linear-gradient(125deg,rgba(6,3,3,.9) 8%,rgba(55,10,14,.72) 52%,rgba(0,0,0,.84) 100%);backdrop-filter:blur(.8px)}
+.stat-card:hover::after{filter:grayscale(45%) contrast(1.65) brightness(.3) sepia(52%)}
+.stat-card:hover{border-color:rgba(230,57,70,.38);box-shadow:0 4px 22px rgba(230,57,70,.18)}
+/* per-card bg images — red/black/white martial arts / gym art */
+#card-overview::after{background-image:url('https://images.unsplash.com/photo-1517963879433-6ad2b056d712?w=600&q=80')}
+#card-members::after{background-image:url('https://images.unsplash.com/photo-1574680096145-d05b474e2155?w=600&q=80')}
+#card-finances::after{background-image:url('https://images.unsplash.com/photo-1604594849809-dfedbc827105?w=600&q=80')}
+#card-trainer-links::after{background-image:url('https://images.unsplash.com/photo-1571019614242-c5c5dee9f50b?w=600&q=80')}
+.stat-body{}
+.stat-num{font-family:'Orbitron',monospace;font-size:1.55rem;font-weight:900;color:#fff;line-height:1;margin-bottom:4px;text-shadow:0 2px 9px rgba(0,0,0,.92)}
+.stat-label{font-size:.62rem;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.9);margin-bottom:3px;text-shadow:0 1px 5px rgba(0,0,0,.92)}
+.stat-sub{font-size:.62rem;color:rgba(255,255,255,.8);text-shadow:0 1px 5px rgba(0,0,0,.92)}
+.stat-badge{display:inline-block;font-size:.6rem;padding:1px 6px;border-radius:3px;background:rgba(100,220,120,.1);color:#6ddc8a;font-weight:700;border:1px solid rgba(100,220,120,.18)}
+
+/* Section head */
+.sec-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.sec-head-left h3{font-family:'Noto Serif JP',serif;font-size:.95rem;font-weight:700;color:var(--white)}
+.sec-head-left p{font-size:.65rem;color:var(--muted);margin-top:1px}
+.sec-head-right{display:flex;gap:7px}
+.sec-btn{padding:5px 12px;border-radius:5px;font-size:.68rem;font-weight:700;letter-spacing:.06em;cursor:pointer;transition:.2s;border:1px solid rgba(255,255,255,.11);background:transparent;color:rgba(240,236,228,.65)}
+.sec-btn:hover{background:rgba(230,57,70,.09);border-color:var(--red);color:var(--white)}
+.sec-btn.active{background:rgba(255,255,255,.06);color:var(--white)}
+.sec-btn.red{background:var(--red);border-color:var(--red);color:#fff}
+.sec-btn.red:hover{background:var(--red2)}
+
+/* Programs grid */
+.prog-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
+.prog-card{background:var(--card);border-radius:11px;border:1px solid var(--border);overflow:hidden;transition:.3s;cursor:pointer;position:relative}
+.prog-card:hover{transform:translateY(-4px);border-color:rgba(230,57,70,.28);box-shadow:0 6px 20px rgba(230,57,70,.14)}
+.prog-img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;filter:grayscale(28%) contrast(1.25) brightness(.96) sepia(12%);display:block;z-index:0}
+/* Full-card veil + subtle lining to keep text readable over images */
+.prog-card::after{content:'';position:absolute;inset:0;z-index:1;background:
+  repeating-linear-gradient(135deg,rgba(255,255,255,.05) 0 1px,transparent 1px 8px),
+  linear-gradient(180deg,rgba(8,6,6,.16) 0%,rgba(10,6,6,.42) 46%,rgba(6,4,4,.68) 100%)}
+.prog-card::before{content:'';position:absolute;inset:0;z-index:2;box-shadow:inset 0 0 0 1px rgba(255,255,255,.08),inset 0 -28px 34px rgba(0,0,0,.32);pointer-events:none}
+.prog-body{padding:10px 11px 11px;position:relative;z-index:3;min-height:146px;display:flex;flex-direction:column;justify-content:flex-end;background:linear-gradient(115deg,rgba(10,6,6,.56) 0%,rgba(42,8,12,.46) 52%,rgba(8,5,5,.58) 100%);border-left:2px solid rgba(230,57,70,.85);border-top:1px solid rgba(255,255,255,.12);border-radius:8px}
+.prog-name{color:#fff!important;text-shadow:0 2px 9px rgba(0,0,0,.92);-webkit-text-stroke:.25px rgba(255,255,255,.12)}
+.prog-meta{color:rgba(255,255,255,.94)!important;text-shadow:0 1px 5px rgba(0,0,0,.92)}
+.prog-meta span{color:#ffe1e1!important}
+.prog-count{color:rgba(255,255,255,.9)!important;text-shadow:0 1px 4px rgba(0,0,0,.9)}
+.prog-foot{margin-top:8px}
+.prog-btn.red{padding:8px 18px;font-size:.74rem;border-radius:7px;box-shadow:0 4px 14px rgba(230,57,70,.45)}
+.prog-name{font-size:.82rem;font-weight:700;color:var(--white);margin-bottom:2px}
+.prog-meta{font-size:.64rem;color:var(--muted);margin-bottom:8px;line-height:1.4}
+.prog-meta span{color:var(--red)}
+.prog-foot{display:flex;align-items:center;justify-content:space-between}
+.prog-btn{padding:4px 11px;border-radius:4px;font-size:.66rem;font-weight:700;cursor:pointer;transition:.2s;border:1px solid rgba(255,255,255,.11);background:transparent;color:var(--white)}
+.prog-btn.red{background:var(--red);border-color:var(--red);color:#fff;box-shadow:0 2px 7px rgba(230,57,70,.3)}
+.prog-btn.red:hover{background:var(--red2)}
+.prog-btn:not(.red):hover{background:rgba(255,255,255,.06)}
+.prog-count{font-size:.6rem;color:rgba(240,236,228,.35)}
+
+/* Trainers row */
+.trainers-row{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:10px}
+.trainer-card{background:var(--card);border-radius:11px;border:1px solid var(--border);padding:14px;display:flex;flex-direction:column;align-items:center;gap:7px;text-align:center;transition:.3s;cursor:pointer}
+.trainer-card:hover{border-color:rgba(230,57,70,.22);box-shadow:0 4px 14px rgba(230,57,70,.09)}
+.trainer-avatar{width:48px;height:48px;border-radius:50%;object-fit:cover;border:2px solid rgba(230,57,70,.28);filter:grayscale(18%)}
+.trainer-name{font-size:.84rem;font-weight:700;color:var(--white)}
+.trainer-role{font-size:.64rem;color:var(--muted);margin-top:-2px}
+.trainer-time{font-size:.6rem;color:rgba(240,236,228,.35)}
+.book-btn{margin-top:3px;padding:4px 16px;border-radius:5px;font-size:.68rem;font-weight:700;letter-spacing:.05em;cursor:pointer;background:var(--red);border:none;color:#fff;transition:.2s;box-shadow:0 2px 8px rgba(230,57,70,.28)}
+.book-btn:hover{background:var(--red2)}
+
+/* RIGHT SIDEBAR */
+.dash-right{display:flex;flex-direction:column;gap:12px;position:sticky;top:76px}
+.r-card{background:var(--card);border-radius:13px;border:1px solid var(--border);overflow:hidden}
+
+/* Profile card */
+.prof-card{padding:18px;text-align:center}
+.prof-avatar{width:56px;height:56px;border-radius:50%;object-fit:cover;border:3px solid rgba(230,57,70,.36);margin:0 auto 9px;display:block;filter:grayscale(18%)}
+.prof-name{font-size:.95rem;font-weight:700;color:var(--white);margin-bottom:2px}
+.prof-meta{font-size:.64rem;color:var(--muted);line-height:1.7;margin-bottom:11px}
+.prof-meta span{color:var(--red);font-weight:600}
+.prof-btn{width:100%;padding:8px;background:var(--red);border:none;border-radius:7px;color:#fff;font-family:'Exo 2',sans-serif;font-size:.76rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;cursor:pointer;transition:.2s;box-shadow:0 3px 12px rgba(230,57,70,.34)}
+.prof-btn:hover{background:var(--red2)}
+
+/* Upcoming classes */
+.upcoming{padding:14px}
+.upcoming h4{font-size:.84rem;font-weight:700;color:var(--white);margin-bottom:1px}
+.upcoming-sub{font-size:.61rem;color:var(--muted);margin-bottom:10px}
+.class-row{display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid rgba(255,255,255,.05)}
+.class-row:last-child{border-bottom:none}
+.c-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.c-info{flex:1;min-width:0}
+.c-name{font-size:.76rem;font-weight:700;color:var(--white);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.c-time{font-size:.6rem;color:var(--muted)}
+.c-btn{padding:3px 9px;border-radius:4px;font-size:.6rem;font-weight:700;cursor:pointer;transition:.2s;flex-shrink:0;letter-spacing:.04em}
+.c-btn.join{background:var(--red);border:none;color:#fff;box-shadow:0 1px 7px rgba(230,57,70,.3)}
+.c-btn.join:hover{background:var(--red2)}
+.c-btn.wait{background:transparent;border:1px solid rgba(255,255,255,.18);color:rgba(240,236,228,.55)}
+.c-btn.wait:hover{border-color:var(--red);color:var(--red)}
+
+/* Heatmap */
+.hm-card{padding:14px}
+.hm-card h4{font-size:.84rem;font-weight:700;color:var(--white);margin-bottom:1px}
+.hm-sub{font-size:.61rem;color:var(--muted);margin-bottom:8px}
+.hm-grid{display:grid;grid-template-columns:repeat(10,1fr);gap:3px}
+.hm-c{height:9px;border-radius:2px;background:rgba(255,255,255,.05)}
+.hm-c.l1{background:rgba(230,57,70,.18)}
+.hm-c.l2{background:rgba(230,57,70,.38)}
+.hm-c.l3{background:rgba(230,57,70,.62)}
+.hm-c.l4{background:rgba(230,57,70,.88)}
+
+/* Event card */
+.event-card{position:relative;min-height:152px;display:flex;align-items:flex-end}
+.event-bg{position:absolute;inset:0;background-image:url('https://unsplash.com/photos/U76RFUjmjzA/download?force=true&w=1200');background-size:cover;background-position:center;filter:grayscale(35%) contrast(1.35) brightness(.48) sepia(22%)}
+.event-overlay{position:absolute;inset:0;background:linear-gradient(180deg,transparent 15%,rgba(10,5,5,.93) 100%)}
+.event-content{position:relative;z-index:1;padding:14px;width:100%}
+.event-eye{font-size:.58rem;letter-spacing:.18em;text-transform:uppercase;color:var(--red);margin-bottom:3px;font-family:'Orbitron',monospace}
+.event-title{font-family:'Noto Serif JP',serif;font-size:.95rem;font-weight:900;color:var(--white);margin-bottom:2px}
+.event-sub{font-size:.64rem;color:rgba(240,236,228,.5);margin-bottom:8px}
+.event-btn{width:100%;padding:7px;background:var(--red);border:none;border-radius:6px;color:#fff;font-family:'Exo 2',sans-serif;font-size:.72rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;transition:.2s;box-shadow:0 3px 12px rgba(230,57,70,.38)}
+.event-btn:hover{background:var(--red2)}
+
+/* Panels */
+.xgym-panel{display:none;padding:26px}
+.search-dim{opacity:.24!important;filter:saturate(.7);transition:opacity .2s ease,filter .2s ease}
+.search-hit{outline:1px solid rgba(230,57,70,.48);box-shadow:0 0 0 1px rgba(230,57,70,.16),0 10px 28px rgba(230,57,70,.12)!important;opacity:1!important}
+.search-hit-scroll{scroll-margin-top:92px}
+
+/* Scrollbar */
+::-webkit-scrollbar{width:5px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:rgba(230,57,70,.24);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:rgba(230,57,70,.48)}
+
+@media(max-width:1200px){.dash-layout{grid-template-columns:1fr 268px}.prog-grid{grid-template-columns:repeat(2,1fr)}.stats-row{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:960px){.dash-layout{grid-template-columns:1fr}.dash-right{position:static}.prog-grid{grid-template-columns:repeat(2,1fr)}.trainers-row{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:600px){.prog-grid{grid-template-columns:1fr}.stats-row{grid-template-columns:repeat(2,1fr)}.trainers-row{grid-template-columns:1fr}.dashboard-home{padding:14px 12px}.sidebar{padding:0 12px}.nav-search-wrap{display:none}}
+
+/* ===== LIGHT MODE ===== */
+body.light{
+  --page:#f0ebe3;--card:#ffffff;--card2:#f7f3ee;
+  --nav-bg:rgba(250,246,240,0.98);--nav-border:rgba(230,57,70,0.2);
+  --border:rgba(0,0,0,0.09);--shadow:0 2px 16px rgba(0,0,0,0.1);
+  --white:#1a1010;--muted:rgba(26,16,16,0.52);
 }
-
-#p1 { opacity: 0.25; }
-#p2 { opacity: 0.45; }
-#p3 { opacity: 0.9; }
-
-.lightfx-layer {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100vw;
-    height: 100vh;
-    pointer-events: none;
-    z-index: -4;
-    opacity: var(--lightfx-opacity);
-    transition: opacity 0.35s ease;
-}
-
-/* Aura glow layer */
-.aura-bg {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100vw;
-    height: 100vh;
-    background: radial-gradient(circle at 50% 20%, rgba(8,165,226,0.1), transparent 70%);
-    filter: blur(80px);
-    z-index: -2;
-    animation: auraDrift 12s infinite alternate ease-in-out;
-    opacity: var(--aura-opacity);
-    transition: opacity 0.35s ease;
-}
-
-@keyframes auraDrift {
-    0% { transform: translateY(-40px); }
-    100% { transform: translateY(40px); }
-}
-
-/* Sidebar */
-.sidebar {
-    width: 270px;
-    height: 100vh;
-    background: var(--sidebar-bg);
-    backdrop-filter: blur(18px);
-    border-right: 1px solid var(--sidebar-border);
-    box-shadow: var(--sidebar-shadow);
-    padding: 40px 25px;
-    position: fixed;
-    top: 0;
-    left: 0;
-    opacity: 0;
-    display: flex;
-    flex-direction: column;
-}
-
-.sidebar h2 {
-    font-family: 'Orbitron', monospace;
-    font-size: 1.4rem;
-    margin-bottom: 6px;
-    letter-spacing: 0.15em;
-    text-transform: uppercase;
-    color: var(--aura);
-    text-shadow: 0 0 20px var(--aura), 0 0 40px rgba(8,165,226,0.3);
-}
-
-.sidebar .admin-badge {
-    display: inline-block;
-    padding: 4px 14px;
-    border-radius: 20px;
-    background: rgba(255,0,0,0.12);
-    color: #ff4444;
-    font-family: 'Orbitron', monospace;
-    font-size: 0.6rem;
-    font-weight: 600;
-    letter-spacing: 0.2em;
-    margin-bottom: 30px;
-}
-
-.nav-item {
-    margin: 18px 0;
-    font-size: 0.95rem;
-    opacity: 0.6;
-    cursor: pointer;
-    transition: 0.3s;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    letter-spacing: 0.04em;
-}
-
-.nav-item:hover {
-    opacity: 1;
-    transform: translateX(10px);
-    color: var(--aura);
-    text-shadow: var(--nav-hover-shadow);
-}
-
-.nav-item .nav-icon {
-    font-size: 1.1rem;
-    width: 24px;
-    text-align: center;
-}
-
-/* Notification Badge System */
-.notification-badge {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 20px;
-    height: 20px;
-    padding: 0 6px;
-    margin-left: auto;
-    background: linear-gradient(135deg, var(--fire), #ff6b47);
-    color: #fff;
-    font-size: 0.7rem;
-    font-weight: 700;
-    border-radius: 10px;
-    box-shadow: 0 0 12px rgba(233,109,37,0.6), 0 2px 4px rgba(0,0,0,0.3);
-    animation: notifPulse 2s ease-in-out infinite;
-    transition: all 0.3s ease;
-}
-
-.notification-badge.hidden {
-    display: none;
-}
-
-@keyframes notifPulse {
-    0%, 100% { transform: scale(1); box-shadow: 0 0 12px rgba(233,109,37,0.6); }
-    50% { transform: scale(1.1); box-shadow: 0 0 20px rgba(233,109,37,0.9); }
-}
-
-body.light .notification-badge {
-    background: linear-gradient(135deg, #ff2f45, #ff6b47);
-    box-shadow: 0 0 12px rgba(255,47,69,0.5), 0 2px 4px rgba(0,0,0,0.2);
-}
-
-.nav-item {
-    margin: 18px 0;
-    font-size: 0.95rem;
-    opacity: 0.6;
-    cursor: pointer;
-    transition: 0.3s;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    letter-spacing: 0.04em;
-    position: relative;
-}
-
-/* Main content */
-.content {
-    margin-left: 270px;
-    padding: 40px 50px;
-    opacity: 0;
-}
-
-.content h1 {
-    font-family: 'Black Han Sans', cursive;
-    font-size: 2.6rem;
-    margin-bottom: 8px;
-    letter-spacing: 0.06em;
-}
-
-.content > p {
-    opacity: 1;
-    color: var(--content-muted);
-    max-width: 700px;
-    margin-bottom: 10px;
-    font-weight: 300;
-    letter-spacing: 0.05em;
-}
-
-.content-header {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 16px;
-    margin-bottom: 8px;
-}
-
-.content-header-text {
-    min-width: 0;
-}
-
-/* Glass cards */
-.grid {
-    margin-top: 40px;
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 22px;
-}
-
-.card {
-    background: var(--bg);
-    padding: 24px;
-    border-radius: 14px;
-    backdrop-filter: blur(12px);
-    border: 1px solid var(--card-border);
-    box-shadow: var(--card-shadow);
-    transition: 0.4s;
-    cursor: pointer;
-}
-
-.card:hover {
-    transform: translateY(-8px) scale(1.02);
-    box-shadow: var(--card-hover-shadow);
-    border-color: var(--aura);
-}
-
-.card h3 {
-    font-family: 'Orbitron', monospace;
-    margin: 0 0 8px;
-    font-size: 1rem;
-    letter-spacing: 0.08em;
-    color: var(--aura);
-    text-shadow: 0 0 10px rgba(8,165,226,0.3);
-}
-
-.card p {
-    opacity: 0.6;
-    font-size: 0.9rem;
-    margin: 0;
-    color: var(--card-muted);
-}
-
-/* Panels (hidden by default) */
-.xgym-panel {
-    display: none;
-    margin-top: 40px;
-}
-
-/* Responsive */
-@media (max-width: 1100px) {
-    .grid { grid-template-columns: repeat(2, 1fr); }
-}
-
-@media (max-width: 768px) {
-    .sidebar { width: 220px; padding: 30px 18px; }
-    .content { margin-left: 220px; padding: 30px 24px; }
-    .grid { grid-template-columns: 1fr; }
-    .content h1 { font-size: 2rem; }
-}
-
-/* Scrollbar styling */
-::-webkit-scrollbar { width: 8px; }
-::-webkit-scrollbar-track { background: rgba(8,165,226,0.02); }
-::-webkit-scrollbar-thumb { background: rgba(8,165,226,0.3); border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(8,165,226,0.5); }
-
-/* Mirrors Edge Catalyst-inspired light theme */
-body.light {
-    --aura: #ff2f45;
-    --aura2: #00d5ff;
-    --fire: #dc1f33;
-    --white: #121820;
-    --page-bg: #f2f7fb;
-    --sidebar-bg: rgba(255,255,255,0.94);
-    --sidebar-border: rgba(0,213,255,0.22);
-    --sidebar-shadow: 2px 0 22px rgba(0,45,68,0.08);
-    --bg: rgba(255,255,255,0.82);
-    --content-muted: rgba(11,24,34,0.72);
-    --card-border: rgba(0,213,255,0.25);
-    --card-shadow: 0 8px 24px rgba(0,43,73,0.08);
-    --card-hover-shadow: 0 16px 28px rgba(255,47,69,0.12);
-    --card-muted: rgba(20,35,49,0.74);
-    --nav-hover-shadow: 0 0 0 transparent;
-    --aura-opacity: 0.1;
-    --lightfx-opacity: 1;
-    color: var(--white);
-}
-
-body.light canvas.particle-layer {
-    opacity: 0;
-    transition: opacity 0.35s ease;
-}
-
-body.light .sidebar h2,
-body.light .card h3 {
-    text-shadow: none;
-}
-
-body.light .admin-badge {
-    background: rgba(255,47,69,0.12);
-    color: #dc1f33;
-}
-
-body.light .xgym-panel [style*="color:#fff"],
-body.light .xgym-panel [style*="color: #fff"] {
-    color: #0e1a27 !important;
-}
-
-body.light ::-webkit-scrollbar-track { background: rgba(0,21,40,0.06); }
-body.light ::-webkit-scrollbar-thumb { background: rgba(255,47,69,0.35); }
-
-/* Theme toggle button */
-.theme-toggle {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-    background: linear-gradient(120deg, rgba(0,213,255,0.08), rgba(255,47,69,0.08));
-    border: 1px solid rgba(0,213,255,0.26);
-    border-radius: 999px;
-  color: inherit;
-  cursor: pointer;
-  font-family: 'Exo 2', sans-serif;
-    font-size: 0.78rem;
-    font-weight: 700;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    padding: 8px 14px;
-  transition: 0.25s;
-    opacity: 0.92;
-    min-width: 148px;
-}
-.theme-toggle:hover {
-    opacity: 1;
-    border-color: var(--aura);
-    transform: translateY(-1px);
-    box-shadow: 0 8px 20px rgba(255,47,69,0.18);
-}
-
-@media (max-width: 768px) {
-        .content-header { flex-direction: column; align-items: flex-start; }
-}
-
+body.light .stat-card::before{background:linear-gradient(90deg,var(--red),rgba(230,57,70,0))}
+body.light .sidebar{box-shadow:0 2px 24px rgba(0,0,0,0.1)}
+body.light .panel-back-btn{background:rgba(248,243,237,.92);color:#1a1010;border-color:rgba(230,57,70,.28);box-shadow:0 8px 24px rgba(0,0,0,.12),0 0 0 1px rgba(0,0,0,.03) inset}
+body.light .panel-back-btn:hover{background:#fff2f3;border-color:rgba(230,57,70,.56)}
+body.light .win-notify{background:rgba(252,249,245,.95);border-color:rgba(230,57,70,.14);box-shadow:0 12px 28px rgba(0,0,0,.12),0 0 0 1px rgba(0,0,0,.03) inset}
+body.light .win-notify-bell{color:#fff}
+body.light .win-notify-title{color:#1a1010}
+body.light .win-notify-text{color:rgba(26,16,16,.68)}
+body.light .win-notify-count{background:rgba(230,57,70,.1);color:#7f1821}
+body.light .nav-item{color:var(--white)}
+body.light .nav-btn{border-color:rgba(0,0,0,0.14);color:var(--white)}
+body.light .nav-btn:hover{background:rgba(0,0,0,0.05)}
+body.light .nav-search{background:rgba(0,0,0,0.04);border-color:rgba(0,0,0,0.12);color:var(--white)}
+body.light .nav-search::placeholder{color:rgba(26,16,16,0.3)}
+body.light .nav-search.search-active{border-color:rgba(230,57,70,.42);box-shadow:0 0 0 1px rgba(230,57,70,.14)}
+body.light .hm-c{background:rgba(0,0,0,0.07)}
+body.light .hm-c.l1{background:rgba(230,57,70,0.18)}
+body.light .hm-c.l2{background:rgba(230,57,70,0.38)}
+body.light .hm-c.l3{background:rgba(230,57,70,0.62)}
+body.light .hm-c.l4{background:rgba(230,57,70,0.88)}
+body.light .event-bg{filter:grayscale(25%) contrast(1.1) brightness(.72)}
+body.light .event-overlay{background:linear-gradient(180deg,transparent 15%,rgba(240,235,227,.95) 100%)}
+body.light .event-eye,body.light .event-sub{color:var(--red)}
+body.light .event-title{color:var(--white)}
+body.light .prog-img{filter:grayscale(8%) contrast(1.08) brightness(1.02) sepia(6%)}
+body.light .prog-card::after{background:
+  repeating-linear-gradient(135deg,rgba(255,255,255,.05) 0 1px,transparent 1px 8px),
+  linear-gradient(180deg,rgba(10,8,8,.18) 0%,rgba(18,10,10,.40) 48%,rgba(18,10,10,.62) 100%)}
+body.light .prog-body{background:linear-gradient(115deg,rgba(14,8,8,.52) 0%,rgba(58,10,16,.42) 52%,rgba(10,7,7,.56) 100%);border-left-color:rgba(230,57,70,.9);border-top-color:rgba(255,255,255,.15)}
+body.light .prog-name{color:#fff!important}
+body.light .prog-meta{color:rgba(255,255,255,.94)!important}
+body.light .prog-meta span{color:#ffe7e7!important}
+body.light .prog-count{color:rgba(255,255,255,.9)!important}
+body.light .stat-card::after{filter:grayscale(50%) contrast(1.45) brightness(.28) sepia(38%)}
+body.light #p1{opacity:.05}body.light #p2{opacity:.09}body.light #p3{opacity:.15}
+/* Fix hardcoded dark-only colors in light mode */
+body.light .stat-card .stat-body{background:linear-gradient(125deg,rgba(16,10,10,.84) 10%,rgba(75,12,18,.63) 56%,rgba(12,12,12,.79) 100%)}
+body.light .stat-label{color:rgba(255,255,255,.9)}
+body.light .stat-sub{color:rgba(255,255,255,.8)}
+body.light .prog-count{color:rgba(26,16,16,.4)}
+body.light .trainer-time{color:rgba(26,16,16,.38)}
+body.light .quote-text{color:rgba(26,16,16,.65)}
+body.light .sec-btn{border-color:rgba(0,0,0,.14);color:rgba(26,16,16,.55)}
+body.light .sec-btn.active{background:rgba(0,0,0,.06);color:var(--white)}
+body.light .ov-btn{background:rgba(0,0,0,.04);border-color:rgba(0,0,0,.12);color:var(--white)}
+body.light .ov-btn:hover{background:rgba(230,57,70,.09);border-color:var(--red)}
+body.light .prog-btn:not(.red){border-color:rgba(0,0,0,.14);color:var(--white)}
+body.light .prog-btn:not(.red):hover{background:rgba(0,0,0,.05)}
+body.light .c-btn.wait{border-color:rgba(0,0,0,.2);color:rgba(26,16,16,.55)}
+body.light .motd-box{background:rgba(0,0,0,.03);border-color:rgba(0,0,0,.08)}
+body.light .quote-box{background:rgba(230,57,70,.06)}
+body.light .upcoming-sub,body.light .hm-sub{color:var(--muted)}
+body.light .class-row{border-bottom-color:rgba(0,0,0,.07)}
+body.light .sec-btn:hover{background:rgba(230,57,70,.09);border-color:var(--red);color:var(--white)}
+/* Theme-safe form controls for backend-injected admin panels */
+.xgym-panel select,.xgym-panel input,.xgym-panel textarea{transition:border-color .2s,background .2s,color .2s}
+.xgym-panel select{color:var(--white)!important;background:rgba(255,255,255,.05)!important;border:1px solid rgba(255,255,255,.15)!important}
+.xgym-panel select:focus,.xgym-panel input:focus,.xgym-panel textarea:focus{outline:none;border-color:rgba(230,57,70,.45)!important;box-shadow:0 0 0 1px rgba(230,57,70,.2)}
+.xgym-panel select option{background:#171212;color:#f0ece4}
+.xgym-panel input[type="date"]{color:var(--white)!important;color-scheme:dark}
+body.light .xgym-panel input[type="date"]{color:#1a1010!important;color-scheme:light}
+body.light .xgym-panel select option{background:#fff;color:#1a1010}
+/* ===== LIGHT MODE — PANEL CONTENT (BackendMain injected HTML) ===== */
+/* Form inputs/selects have inline color:#fff — override */
+body.light .xgym-panel input,body.light .xgym-panel select,body.light .xgym-panel textarea{color:#1a1010!important;background:rgba(0,0,0,.04)!important;border-color:rgba(0,0,0,.15)!important}
+body.light .xgym-panel input::placeholder{color:rgba(26,16,16,.4)!important}
+/* Edit button has inline background:rgba(255,255,255,.1);color:#fff */
+body.light .xgym-panel .admin-edit-item{background:rgba(0,0,0,.07)!important;color:#1a1010!important;border:1px solid rgba(0,0,0,.12)!important}
+/* Cards in panels — give white bg + dark text */
+body.light .xgym-panel .card{background:#fff;border:1px solid rgba(0,0,0,.07);border-radius:10px;color:#1a1010}
+body.light .xgym-panel .card h3{color:#1a1010}
+body.light .xgym-panel .card p{color:rgba(26,16,16,.72)}
+/* Canvas charts — dark bg so white canvas text stays readable */
+body.light canvas[id^="chart-"]{background:#1a1010;border-radius:8px}
 </style>
 </head>
-
 <body>
-
-<!-- Particle layers -->
 <canvas id="p1" class="particle-layer"></canvas>
 <canvas id="p2" class="particle-layer"></canvas>
 <canvas id="p3" class="particle-layer"></canvas>
-<canvas id="lightfx" class="lightfx-layer"></canvas>
 
-<!-- Aura glow -->
-<div class="aura-bg"></div>
-
-<!-- Sidebar -->
+<!-- TOP NAVBAR — kept as .sidebar for BackendMain.js -->
 <div class="sidebar" id="sidebar">
+  <div class="sidebar-logo">
+    <div class="logo-icon" aria-hidden="true"></div>
     <h2>The Gym</h2>
-    <span class="admin-badge">ADMIN PANEL</span>
+  </div>
+  <span class="admin-badge" id="admin-role-badge">ADMIN</span>
 
-    <div class="nav-item" id="nav-dashboard">
-        <span class="nav-icon"></span> Dashboard
-    </div>
-    <div class="nav-item" data-panel="panel-overview">
-        <span class="nav-icon"></span> Overview & Stats
-    </div>
-    <div class="nav-item" data-panel="panel-members">
-        <span class="nav-icon"></span> Members
-        <span class="notification-badge hidden" id="notif-members">0</span>
-    </div>
-    <div class="nav-item" data-panel="panel-memberships">
-        <span class="nav-icon"></span> Memberships
-        <span class="notification-badge hidden" id="notif-memberships">0</span>
-    </div>
-    <div class="nav-item" data-panel="panel-finances">
-        <span class="nav-icon"></span> Finances
-    </div>
-    <div class="nav-item" data-panel="panel-admins">
-        <span class="nav-icon"></span> Admins
-    </div>
-    <div class="nav-item" data-panel="panel-trainer-links">
-        <span class="nav-icon"></span> Trainer–Client Links
-        <span class="notification-badge hidden" id="notif-trainer-links">0</span>
-    </div>
-    <div class="nav-item" data-panel="panel-classes">
-        <span class="nav-icon"></span> Manage Classes
-    </div>
-    <div class="nav-item" data-panel="panel-messenger">
-        <span class="nav-icon">💬</span> Messenger
-        <span class="notification-badge hidden" id="notif-messenger">0</span>
-    </div>
+  <div class="nav-search-wrap">
+    <input class="nav-search" type="text" placeholder="Search members, classes or trainers…">
+  </div>
 
-        <div style="flex:1"></div>
-    <div id="logout-btn" class="nav-item" style="color:var(--fire);cursor:pointer;margin-top:auto">
-        <span class="nav-icon">⎋</span> Logout
-    </div>
+  <div class="nav-items-scroll">
+    <div class="nav-item" id="nav-dashboard"><span class="nav-icon">⊞</span>Dashboard</div>
+    <div class="nav-item" data-panel="panel-overview"><span class="nav-icon">📊</span>Overview
+      <span class="notification-badge hidden" id="notif-overview">0</span></div>
+    <div class="nav-item" data-panel="panel-members"><span class="nav-icon">👥</span>Members
+      <span class="notification-badge hidden" id="notif-members">0</span></div>
+    <div class="nav-item" data-panel="panel-memberships"><span class="nav-icon">🎫</span>Memberships
+      <span class="notification-badge hidden" id="notif-memberships">0</span></div>
+    <div class="nav-item" data-panel="panel-store"><span class="nav-icon">🛒</span>Store</div>
+    <div class="nav-item" data-panel="panel-finances"><span class="nav-icon">💴</span>Finances</div>
+    <div class="nav-item" data-panel="panel-admins"><span class="nav-icon">🛡️</span>Admins</div>
+    <div class="nav-item" data-panel="panel-trainer-links"><span class="nav-icon">🔗</span>Trainer Links
+      <span class="notification-badge hidden" id="notif-trainer-links">0</span></div>
+    <div class="nav-item" data-panel="panel-classes"><span class="nav-icon">🥋</span>Classes</div>
+    <div class="nav-item" data-panel="panel-messenger"><span class="nav-icon">💬</span>Messenger
+      <span class="notification-badge hidden" id="notif-messenger">0</span></div>
+  </div>
+
+  <div class="nav-actions">
+    <button class="nav-btn" onclick="document.querySelector('[data-panel=panel-store]').click()">Store</button>
+    <button class="nav-btn red-btn" onclick="document.querySelector('[data-panel=panel-classes]').click()">Manage Classes</button>
+    <button class="theme-toggle" id="theme-toggle-btn"><span id="theme-icon">☀️</span></button>
+    <button id="logout-btn" class="nav-btn red-btn" title="Logout">Logout</button>
+  </div>
 </div>
 
-<!-- Main content -->
+<!-- MAIN CONTENT -->
 <div class="content" id="content">
-        <div class="content-header">
-            <div class="content-header-text">
-                <h1 id="admin-greeting">Admin Panel</h1>
-                <p>Full control over members, store, memberships, finances and trainer relationships.</p>
+  <button class="panel-back-btn" id="panel-back-btn" aria-label="Go back to dashboard" title="Back to dashboard"><span>←</span></button>
+  <div class="win-notify-stack" id="win-notify-stack" aria-live="polite" aria-atomic="true"></div>
+  <!-- Hidden for BackendMain.js compat -->
+  <div class="content-header" style="display:none">
+    <div class="content-header-text"><h1 id="admin-header-greeting">Admin Panel</h1></div>
+  </div>
+
+  <!-- DASHBOARD HOME -->
+  <div class="dashboard-home" id="dashboard-home">
+    <div class="dash-layout">
+
+      <!-- LEFT MAIN -->
+      <div class="dash-main">
+
+        <!-- Daily Overview Card -->
+        <div class="overview-card">
+          <div class="ov-header">
+            <div>
+              <div class="ov-title">Daily Overview</div>
+              <div class="ov-sub">Pulse of the gym — live metrics and today's highlights</div>
             </div>
-            <button class="theme-toggle" id="theme-toggle-btn"><span id="theme-icon">☀️</span><span id="theme-label">Light Mode</span></button>
+            <div class="ov-btns">
+              <button class="ov-btn" onclick="document.querySelector('[data-panel=panel-finances]').click()">Finances</button>
+              <button class="ov-btn" onclick="document.querySelector('[data-panel=panel-admins]').click()">Settings</button>
+            </div>
+          </div>
+          <div class="ov-body">
+            <div class="ov-art">
+              <img src="https://unsplash.com/photos/coy_MhYMLHs/download?force=true&w=900" alt="Gym">
+              <div class="ov-art-overlay"></div>
+            </div>
+            <div class="ov-info">
+              <div class="motd-box">
+                <div class="motd-label">Member of the Day</div>
+                <div class="motd-inner" id="motd-inner">
+                  <div class="motd-avatar" style="background:rgba(230,57,70,.1);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:1rem;">👤</div>
+                  <div>
+                    <div class="motd-name" id="motd-name">Loading…</div>
+                    <div class="motd-stat" id="motd-stat">Fetching from backend…</div>
+                  </div>
+                </div>
+              </div>
+              <div class="quote-box">
+                <div class="quote-text">"Train like the night depends on it — become legend."</div>
+              </div>
+              <button class="start-btn" onclick="document.querySelector('[data-panel=panel-overview]').click()">Full Overview</button>
+            </div>
+          </div>
         </div>
 
-    <!-- Dashboard Cards Grid -->
-    <div class="grid">
-        <div class="card" id="card-overview">
-            <h3> Overview & Statistics</h3>
-            <p>Gym progress, revenue charts and member breakdowns.</p>
+        <!-- Stats Row -->
+        <div class="stats-row">
+          <div class="stat-card" id="card-overview">
+            <div class="stat-body">
+              <div class="stat-num" id="stat-members">—</div>
+              <div class="stat-label">Total Members</div>
+              <div class="stat-sub" id="stat-members-sub">Loading…</div>
+            </div>
+          </div>
+          <div class="stat-card" id="card-members">
+            <div class="stat-body">
+              <div class="stat-num" id="stat-checkins">—</div>
+              <div class="stat-label">Active Memberships</div>
+              <div class="stat-sub" id="stat-memberships-sub">Loading…</div>
+            </div>
+          </div>
+          <div class="stat-card" id="card-finances">
+            <div class="stat-body">
+              <div class="stat-num" id="stat-revenue">—</div>
+              <div class="stat-label">Total Revenue</div>
+              <div class="stat-sub" id="stat-revenue-sub">Loading…</div>
+            </div>
+          </div>
+          <div class="stat-card" id="card-trainer-links">
+            <div class="stat-body">
+              <div class="stat-num" id="stat-trainers">—</div>
+              <div class="stat-label">Trainer-Client Links</div>
+              <div class="stat-sub" id="stat-trainers-sub">Loading…</div>
+            </div>
+          </div>
         </div>
-        <div class="card" id="card-members">
-            <h3> Manage Members</h3>
-            <p>View, edit, and remove registered members.</p>
-        </div>
-        <div class="card" id="card-store-mgmt">
-            <h3>Store Management</h3>
-            <p>Add, update, and remove store items.</p>
-        </div>
-        <div class="card" id="card-memberships">
-            <h3>Memberships</h3>
-            <p>Create, activate, deactivate memberships.</p>
-        </div>
-        <div class="card" id="card-finances">
-            <h3>Finances</h3>
-            <p>Revenue, expenses and net profit overview.</p>
-        </div>
-        <div class="card" id="card-trainer-links">
-            <h3> Trainer–Client Links</h3>
-            <p>View and manage trainer-client relationships.</p>
-        </div>
-        <div class="card" id="card-classes">
-            <h3>Manage Classes</h3>
-            <p>Create classes, assign trainers, manage the weekly schedule.</p>
-        </div>
-        <div class="card" id="card-messenger">
-            <h3>💬 Messenger</h3>
-            <p>View all trainers &amp; clients. Monitor messaging activity.</p>
-        </div>
-    </div>
 
-    <!-- Panels populated by BackendMain.js -->
-    <div id="panel-overview"       class="xgym-panel"></div>
-    <div id="panel-members"        class="xgym-panel"></div>
-    <div id="panel-store"          class="xgym-panel"></div>
-    <div id="panel-memberships"    class="xgym-panel"></div>
-    <div id="panel-finances"       class="xgym-panel"></div>
-    <div id="panel-trainer-links"  class="xgym-panel"></div>
-    <div id="panel-classes"        class="xgym-panel"></div>
-    <div id="panel-messenger"      class="xgym-panel"></div>
-    <div id="panel-admins"         class="xgym-panel"></div>
+        <!-- Control Panels section -->
+        <div class="sec-head">
+          <div class="sec-head-left">
+            <h3>Control Panels</h3>
+            <p>Curated admin-level management stacks</p>
+          </div>
+          <div class="sec-head-right">
+            <button class="sec-btn active">All Panels</button>
+            <button class="sec-btn red" onclick="document.querySelector('[data-panel=panel-classes]').click()">Create Class</button>
+          </div>
+        </div>
+        <div class="prog-grid">
+          <div class="prog-card" id="card-store-mgmt">
+            <img class="prog-img store-feature" src="https://unsplash.com/photos/M7Q-CANIU0U/download?force=true&w=1200" alt="Store Management">
+            <div class="prog-body">
+              <div class="prog-name">Store Management</div>
+              <div class="prog-meta">Products · <span>Active Stock</span></div>
+              <div class="prog-foot"><button class="prog-btn red">Open</button><span class="prog-count">Items</span></div>
+            </div>
+          </div>
+          <div class="prog-card" id="card-memberships">
+            <img class="prog-img" src="https://unsplash.com/photos/TamMbr4okv4/download?force=true&w=1200" alt="Memberships">
+            <div class="prog-body">
+              <div class="prog-name">Memberships</div>
+              <div class="prog-meta">Plans · <span>Active Tiers</span></div>
+              <div class="prog-foot"><button class="prog-btn red">Open</button><span class="prog-count">Plans</span></div>
+            </div>
+          </div>
+          <div class="prog-card" id="card-classes">
+            <img class="prog-img" src="https://images.unsplash.com/photo-1571902943202-507ec2618e8f?w=400&q=80" alt="">
+            <div class="prog-body">
+              <div class="prog-name">Classes</div>
+              <div class="prog-meta">Schedule · <span>Assign Trainers</span></div>
+              <div class="prog-foot"><button class="prog-btn red">Open</button><span class="prog-count">Sessions</span></div>
+            </div>
+          </div>
+          <div class="prog-card" id="card-messenger">
+            <img class="prog-img" src="https://images.unsplash.com/photo-1596526131083-e8c633c948d2?w=400&q=80" alt="">
+            <div class="prog-body">
+              <div class="prog-name">Messenger</div>
+              <div class="prog-meta">All comms · <span>Monitor</span></div>
+              <div class="prog-foot"><button class="prog-btn red">Open</button><span class="prog-count">Threads</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Trainers section — populated by BackendMain.js -->
+        <div class="sec-head">
+          <div class="sec-head-left">
+            <h3>Registered Trainers</h3>
+            <p id="trainers-subtitle">Loading trainers…</p>
+          </div>
+          <div class="sec-head-right">
+            <button class="sec-btn red" onclick="document.querySelector('[data-panel=panel-trainer-links]').click()">Trainer-Client Links</button>
+          </div>
+        </div>
+        <div class="trainers-row" id="admin-trainers-row">
+          <div style="grid-column:1/-1;padding:22px;text-align:center;background:var(--card);border-radius:11px;border:1px solid var(--border);color:var(--muted);font-size:.76rem">
+            Trainer data is loaded by the backend — open <strong style="color:var(--red);cursor:pointer" onclick="document.querySelector('[data-panel=panel-trainer-links]').click()">Trainer Links</strong> to manage trainers.
+          </div>
+        </div>
+
+      </div><!-- /dash-main -->
+
+      <!-- RIGHT SIDEBAR -->
+      <div class="dash-right">
+
+        <!-- Profile card -->
+        <div class="r-card prof-card">
+          <img class="prof-avatar" src="https://images.unsplash.com/photo-1546456073-92b11f47b3ef?w=120&q=80" alt="">
+          <div class="prof-name" id="admin-profile-name">Admin</div>
+          <div class="prof-meta" id="admin-profile-meta"><span>Administrator</span><br>Full system access</div>
+          <button class="prof-btn" onclick="document.querySelector('[data-panel=panel-overview]').click()">Full Overview</button>
+        </div>
+
+        <!-- Classes Today — admin manages, not joins -->
+        <div class="r-card upcoming">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1px">
+            <h4>Classes Today</h4>
+            <button onclick="document.querySelector('[data-panel=panel-classes]').click()" style="font-size:.62rem;background:transparent;border:1px solid rgba(230,57,70,.3);color:var(--red);border-radius:4px;padding:2px 7px;cursor:pointer">Manage</button>
+          </div>
+          <div class="upcoming-sub">Live from backend — open Classes panel to edit</div>
+          <div id="admin-classes-today" style="padding:14px 0 4px;text-align:center;color:var(--muted);font-size:.72rem">
+            Classes will be listed here once loaded by the backend.
+          </div>
+        </div>
+
+        <!-- Attendance Heatmap -->
+        <div class="r-card hm-card">
+          <h4>Attendance Heatmap</h4>
+          <div class="hm-sub" id="heatmap-subtitle">Last 30 days</div>
+          <div class="hm-grid" id="heatmap-grid"></div>
+        </div>
+
+        <!-- Quick Actions card -->
+        <div class="r-card event-card">
+          <div class="event-bg"></div>
+          <div class="event-overlay"></div>
+          <div class="event-content">
+            <div class="event-eye">Admin · Quick Actions</div>
+            <div class="event-title">Control Panel</div>
+            <div class="event-sub">Review income, expenses &amp; net profit.</div>
+            <button class="event-btn" onclick="document.querySelector('[data-panel=panel-finances]').click()">Open Finances</button>
+          </div>
+        </div>
+
+      </div><!-- /dash-right -->
+    </div><!-- /dash-layout -->
+  </div><!-- /dashboard-home -->
+
+  <!-- Panels populated by BackendMain.js -->
+  <div id="panel-overview"       class="xgym-panel"></div>
+  <div id="panel-members"        class="xgym-panel"></div>
+  <div id="panel-store"          class="xgym-panel"></div>
+  <div id="panel-memberships"    class="xgym-panel"></div>
+  <div id="panel-finances"       class="xgym-panel"></div>
+  <div id="panel-trainer-links"  class="xgym-panel"></div>
+  <div id="panel-classes"        class="xgym-panel"></div>
+  <div id="panel-messenger"      class="xgym-panel"></div>
+  <div id="panel-admins"         class="xgym-panel"></div>
 </div>
-
 
 <!-- Firebase compat SDKs -->
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
-
-<!-- X-Gym Backend -->
 <script src="BackendMain.js"></script>
-
-<!-- GSAP -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
-
 <script>
-/* Particle generator — blue aura particles matching index.html */
-function particleLayer(canvas, count, speed) {
-    const ctx = canvas.getContext("2d");
-    let w, h;
+// Ember particle system
+function particleLayer(canvas,count,speed){
+  const ctx=canvas.getContext("2d");let w,h;
+  function resize(){w=canvas.width=window.innerWidth;h=canvas.height=window.innerHeight}
+  resize();window.addEventListener("resize",resize);
+  const pts=[];for(let i=0;i<count;i++)pts.push({x:Math.random()*(w||1e3),y:Math.random()*(h||800),sz:Math.random()*1.6+.4,vx:(Math.random()-.5)*speed,vy:(Math.random()-.5)*speed});
+  function anim(){ctx.clearRect(0,0,w,h);var lm=document.body.classList.contains('light');pts.forEach(p=>{p.x+=p.vx;p.y+=p.vy;if(p.x<0)p.x=w;if(p.x>w)p.x=0;if(p.y<0)p.y=h;if(p.y>h)p.y=0;ctx.fillStyle=lm?(Math.random()>.7?"rgba(180,20,30,.45)":"rgba(210,60,40,.28)"):(Math.random()>.7?"rgba(230,57,70,.8)":"rgba(255,190,150,.6)");ctx.beginPath();ctx.arc(p.x,p.y,p.sz,0,Math.PI*2);ctx.fill()});requestAnimationFrame(anim)}anim()}
+particleLayer(document.getElementById("p1"),22,.11);
+particleLayer(document.getElementById("p2"),40,.27);
+particleLayer(document.getElementById("p3"),65,.52);
 
-    function resize() {
-        w = canvas.width = window.innerWidth;
-        h = canvas.height = window.innerHeight;
-    }
-    resize();
-    window.addEventListener("resize", resize);
+// Attendance heatmap — last 30 days from real attendance data
+async function renderAttendanceHeatmap(classes){
+  var g=document.getElementById('heatmap-grid');if(!g)return;
+  var sub=document.getElementById('heatmap-subtitle');
+  var now=new Date();now.setHours(0,0,0,0);
+  var days=[];
+  var counts={};
+  for(var i=29;i>=0;i--){
+    var d=new Date(now);d.setDate(now.getDate()-i);
+    var key=d.toISOString().slice(0,10);
+    days.push({date:d,key:key});
+    counts[key]=0;
+  }
 
-    const particles = [];
-    for (let i = 0; i < count; i++) {
-        particles.push({
-            x: Math.random() * w,
-            y: Math.random() * h,
-            size: Math.random() * 2 + 1,
-            vx: (Math.random() - 0.5) * speed,
-            vy: (Math.random() - 0.5) * speed
-        });
-    }
+  function addCount(ts,amount){
+    var d=new Date(ts);if(isNaN(d.getTime()))return;
+    d.setHours(0,0,0,0);
+    var key=d.toISOString().slice(0,10);
+    if(Object.prototype.hasOwnProperty.call(counts,key))counts[key]+=amount||1;
+  }
 
-    function animate() {
-        ctx.clearRect(0, 0, w, h);
-        particles.forEach(p => {
-            p.x += p.vx;
-            p.y += p.vy;
-
-            if (p.x < 0) p.x = w;
-            if (p.x > w) p.x = 0;
-            if (p.y < 0) p.y = h;
-            if (p.y > h) p.y = 0;
-
-            ctx.fillStyle = "rgba(8, 165, 226, 0.8)";
-            ctx.beginPath();
-            ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-            ctx.fill();
-        });
-        requestAnimationFrame(animate);
-    }
-    animate();
-}
-
-particleLayer(document.getElementById("p1"), 40, 0.2);
-particleLayer(document.getElementById("p2"), 70, 0.4);
-particleLayer(document.getElementById("p3"), 120, 0.7);
-
-function catalystLightLayer(canvas) {
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    let w = 0, h = 0, t = 0;
-    const shards = Array.from({ length: 22 }, () => ({
-        x: Math.random(),
-        y: Math.random(),
-        len: Math.random() * 140 + 60,
-        speed: Math.random() * 0.0014 + 0.0005,
-        width: Math.random() * 2.2 + 0.8,
-        hue: Math.random() > 0.5 ? "#ff2f45" : "#00d5ff"
+  if(typeof getClassAttendance==='function'&&classes&&classes.length){
+    await Promise.all(classes.map(async function(c){
+      var attendance=await getClassAttendance(c.id).catch(function(){return {};});
+      Object.keys(attendance||{}).forEach(function(clientId){
+        var rec=attendance[clientId];
+        if(rec&&rec.attended&&rec.markedAt)addCount(rec.markedAt,1);
+      });
     }));
+  }
 
-    function resize() {
-        w = canvas.width = window.innerWidth;
-        h = canvas.height = window.innerHeight;
-    }
-    resize();
-    window.addEventListener("resize", resize);
+  // Fallback: if no attendance has been marked yet, use scheduled class participation for dated classes.
+  var total=Object.keys(counts).reduce(function(sum,key){return sum+counts[key];},0);
+  if(total===0&&classes&&classes.length){
+    classes.forEach(function(c){
+      var ts=c.scheduledAt||c.date;
+      if(!ts)return;
+      var participantCount=c.participants?Object.keys(c.participants).length:0;
+      if(participantCount>0)addCount(ts,participantCount);
+    });
+    total=Object.keys(counts).reduce(function(sum,key){return sum+counts[key];},0);
+  }
 
-    function draw() {
-        t += 1;
-        ctx.clearRect(0, 0, w, h);
-        const g = ctx.createLinearGradient(0, 0, w, h);
-        g.addColorStop(0, "rgba(255,47,69,0.09)");
-        g.addColorStop(0.5, "rgba(255,255,255,0)");
-        g.addColorStop(1, "rgba(0,213,255,0.1)");
-        ctx.fillStyle = g;
-        ctx.fillRect(0, 0, w, h);
+  var max=0;days.forEach(function(day){if(counts[day.key]>max)max=counts[day.key];});
+  function levelFor(v){
+    if(v<=0)return '';
+    if(max<=1)return 'l4';
+    var ratio=v/max;
+    if(ratio>=.75)return 'l4';
+    if(ratio>=.5)return 'l3';
+    if(ratio>=.25)return 'l2';
+    return 'l1';
+  }
 
-        shards.forEach(s => {
-            const px = (s.x + t * s.speed) % 1;
-            const py = (s.y + Math.sin((t * 0.006) + s.x * 10) * 0.06 + 1) % 1;
-            const x = px * w;
-            const y = py * h;
-            const a = Math.sin((t * 0.01) + s.y * 12) * 0.5 + 0.5;
+  g.innerHTML=days.map(function(day){
+    var count=counts[day.key]||0;
+    var cls='hm-c '+levelFor(count);
+    return '<div class="'+cls+'" title="'+day.date.toLocaleDateString([], { day: '2-digit', month: 'short' })+' · '+count+' attendance"></div>';
+  }).join('');
 
-            ctx.save();
-            ctx.translate(x, y);
-            ctx.rotate(-0.55);
-            ctx.globalAlpha = 0.18 + a * 0.3;
-            ctx.fillStyle = s.hue;
-            ctx.fillRect(-s.len * 0.5, -s.width * 0.5, s.len, s.width);
-            ctx.restore();
-        });
-
-        requestAnimationFrame(draw);
-    }
-
-    draw();
+  var average=(total/30).toFixed(1);
+  var peakDay=days.reduce(function(best,day){
+    var v=counts[day.key]||0;
+    return v>best.count?{key:day.key,count:v}:best;
+  },{key:'',count:0});
+  var peakLabel=peakDay.key?new Date(peakDay.key+'T00:00:00').toLocaleDateString([], { day: '2-digit', month: 'short' }):'none';
+  if(sub)sub.textContent=total>0
+    ?('Last 30 days · '+total+' attendance · avg '+average+'/day · peak '+peakLabel+' ('+peakDay.count+')')
+    :'Last 30 days · no attendance data yet';
 }
 
-catalystLightLayer(document.getElementById("lightfx"));
+function applyAdminIdentity(profile,currentUser){
+  var rawRole=(profile&&profile.role?String(profile.role):'admin').toLowerCase();
+  var roleLabel=rawRole==='trainer'?'TRAINER':'ADMIN';
+  var roleTitle=roleLabel==='ADMIN'?'Administrator':'Trainer';
+  var name=(profile&&profile.name)||currentUser.displayName||currentUser.email||roleTitle;
 
-/* GSAP entrance */
-gsap.to("#sidebar", {
-    opacity: 1,
-    duration: 1.4,
-    ease: "power3.out"
+  var badge=document.getElementById('admin-role-badge');
+  if(badge)badge.textContent=roleLabel;
+
+  var headerGreeting=document.getElementById('admin-header-greeting');
+  if(headerGreeting)headerGreeting.textContent=roleTitle+' Panel';
+
+  var profileName=document.getElementById('admin-profile-name');
+  if(profileName)profileName.textContent=name;
+
+  var profileMeta=document.getElementById('admin-profile-meta');
+  if(profileMeta)profileMeta.innerHTML='<span>'+roleTitle+'</span><br>Full system access';
+}
+
+// GSAP entrance
+gsap.to("#sidebar",{opacity:1,duration:.7,ease:"power2.out"});
+gsap.to("#content",{opacity:1,duration:.9,delay:.15,ease:"power2.out"});
+
+function syncPanelBackButton(){
+  var btn=document.getElementById('panel-back-btn');
+  if(!btn)return;
+  var home=document.getElementById('dashboard-home');
+  var homeVisible=home&&home.style.display!=='none';
+  var panelOpen=[].some.call(document.querySelectorAll('.xgym-panel'),function(p){return p.style.display==='block'});
+  btn.style.display=!homeVisible&&panelOpen?'flex':'none';
+}
+
+var backBtn=document.getElementById('panel-back-btn');
+if(backBtn){backBtn.addEventListener('click',function(){var dash=document.getElementById('nav-dashboard');if(dash)dash.click();});}
+
+// Panel navigation — hide/show dashboard home
+document.querySelectorAll('.nav-item[data-panel]').forEach(function(item){
+  item.addEventListener('click',function(){
+    document.getElementById('dashboard-home').style.display='none';
+    document.querySelectorAll('.nav-item').forEach(function(n){n.classList.remove('active')});
+    item.classList.add('active');
+    setTimeout(syncPanelBackButton,0);
+  });
+});
+document.getElementById('nav-dashboard')&&document.getElementById('nav-dashboard').addEventListener('click',function(){
+  document.getElementById('dashboard-home').style.display='block';
+  document.querySelectorAll('.xgym-panel').forEach(function(p){p.style.display='none'});
+  document.querySelectorAll('.nav-item').forEach(function(n){n.classList.remove('active')});
+  setTimeout(syncPanelBackButton,0);
 });
 
-gsap.to("#content", {
-    opacity: 1,
-    duration: 1.4,
-    delay: 0.3,
-    ease: "power3.out"
-});
+// Card → panel mapping
+var CP={'card-overview':'panel-overview','card-members':'panel-members','card-store-mgmt':'panel-store','card-memberships':'panel-memberships','card-finances':'panel-finances','card-trainer-links':'panel-trainer-links','card-classes':'panel-classes','card-messenger':'panel-messenger'};
+Object.keys(CP).forEach(function(id){var el=document.getElementById(id);if(el)el.addEventListener('click',function(){var nav=document.querySelector('.nav-item[data-panel="'+CP[id]+'"]');if(nav)nav.click()})});
 
-/* Theme toggle */
-(function() {
-    const btn = document.getElementById("theme-toggle-btn");
-    const icon = document.getElementById("theme-icon");
-    const lbl  = document.getElementById("theme-label");
-    if (!btn) return;
+// Theme toggle
+(function(){var btn=document.getElementById("theme-toggle-btn");if(!btn)return;function apply(l){document.body.classList.toggle("light",l);document.getElementById("theme-icon").textContent=l?"🌙":"☀️";localStorage.setItem("xgym-theme",l?"light":"dark")}btn.addEventListener("click",function(){apply(!document.body.classList.contains("light"))});apply(localStorage.getItem("xgym-theme")==="light")})();
+syncPanelBackButton();
 
-    function apply(light) {
-        document.body.classList.toggle("light", light);
-        icon.textContent = light ? "\uD83C\uDF19" : "\u2600\uFE0F";
-        lbl.textContent  = light ? "Dark Mode" : "Light Mode";
+// Search bar interactions
+(function(){
+  var searchInput=document.querySelector('.nav-search');
+  if(!searchInput)return;
+  searchInput.addEventListener('input',function(){runAdminSearch(searchInput.value,{allowNavigate:false,scroll:false});});
+  searchInput.addEventListener('keydown',function(e){
+    if(e.key==='Enter'){
+      e.preventDefault();
+      runAdminSearch(searchInput.value,{allowNavigate:true,scroll:true});
+    } else if(e.key==='Escape'){
+      searchInput.value='';
+      runAdminSearch('',{allowNavigate:false,scroll:false});
+      searchInput.blur();
     }
-
-    apply(localStorage.getItem("xgym-theme") === "light");
-    btn.addEventListener("click", function() {
-        const isLight = !document.body.classList.contains("light");
-        apply(isLight);
-        localStorage.setItem("xgym-theme", isLight ? "light" : "dark");
-    });
+  });
 })();
 
-/* ===================================
-   NOTIFICATION SYSTEM - ADMIN
-   =================================== */
-(function() {
-    const PANEL_MAP = {
-        'panel-messenger':     'messenger',
-        'panel-members':       'members',
-        'panel-memberships':   'memberships',
-        'panel-trainer-links': 'trainer-links'
+// Notification system
+var PANEL_MAP={'panel-members':'members','panel-memberships':'memberships','panel-trainer-links':'trainer-links','panel-messenger':'messenger'};
+var NOTIF_TITLES={members:'Members',memberships:'Memberships','trainer-links':'Trainer Links',messenger:'Messenger'};
+function showWinNotification(type,count){
+  var stack=document.getElementById('win-notify-stack');
+  if(!stack)return;
+  var card=document.createElement('div');
+  var label=NOTIF_TITLES[type]||'Notification';
+  var text=(count===1?'1 new item in ':'New activity in ')+label.toLowerCase();
+  card.className='win-notify';
+  card.innerHTML='<div class="win-notify-bell">🔔</div><div class="win-notify-copy"><div class="win-notify-title">'+label+' update</div><div class="win-notify-text">'+text+'</div><div class="win-notify-count">'+count+' pending</div></div>';
+  stack.appendChild(card);
+  requestAnimationFrame(function(){card.classList.add('show');});
+  setTimeout(function(){card.classList.remove('show');setTimeout(function(){if(card&&card.parentNode)card.parentNode.removeChild(card);},280);},3200);
+}
+var NotificationManager={
+  notifications:{members:0,memberships:0,'trainer-links':0,messenger:0},
+  init:function(){this.updateAllBadges();this.setupPanelListeners()},
+  setNotification:function(t,c){var prev=this.notifications[t]||0;this.notifications[t]=c;this.updateBadge(t);if(c>prev&&c>0)showWinNotification(t,c)},
+  clearNotification:function(t){this.notifications[t]=0;this.updateBadge(t)},
+  updateBadge:function(t){var m={members:'notif-members',memberships:'notif-memberships','trainer-links':'notif-trainer-links',messenger:'notif-messenger'};var b=document.getElementById(m[t]);if(!b)return;var c=this.notifications[t]||0;b.textContent=c>99?'99+':c;b.classList.toggle('hidden',c===0)},
+  updateAllBadges:function(){var self=this;Object.keys(this.notifications).forEach(function(t){self.updateBadge(t)})},
+  setupPanelListeners:function(){document.querySelectorAll('.nav-item[data-panel]').forEach(function(ni){ni.addEventListener('click',function(){var t=PANEL_MAP[ni.getAttribute('data-panel')];if(t)NotificationManager.clearNotification(t)})})}
+};
+if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',function(){NotificationManager.init()})}else{NotificationManager.init()}
+window.XGymNotifications=NotificationManager;
+
+// ── Live trainer cards from backend ──────────────────────────────────────────
+function renderAdminTrainers(trainers){
+  var row=document.getElementById('admin-trainers-row');if(!row)return;
+  var sub=document.getElementById('trainers-subtitle');
+  if(!trainers||!trainers.length){
+    if(sub)sub.textContent='No trainers registered yet';
+    row.innerHTML='<div style="grid-column:1/-1;padding:22px;text-align:center;background:var(--card);border-radius:11px;border:1px solid var(--border);color:var(--muted);font-size:.76rem">No trainers registered yet. <strong style="color:var(--red);cursor:pointer" onclick="document.querySelector(\'[data-panel=panel-trainer-links]\').click()">Add via Trainer-Client Links</strong></div>';
+    return;
+  }
+  if(sub)sub.textContent=trainers.length+' trainer'+(trainers.length===1?'':'s')+' registered';
+  row.innerHTML=trainers.map(function(t){
+    var initials=(t.displayName||t.name||'?').charAt(0).toUpperCase();
+    var photo=t.photoURL?'<img class="trainer-avatar" src="'+t.photoURL+'" alt="" onerror="this.style.display=\'none\';this.nextSibling.style.display=\'flex\'"><div class="trainer-avatar" style="display:none;align-items:center;justify-content:center;background:rgba(230,57,70,.12);font-size:1rem;font-weight:700">'+initials+'</div>':'<div class="trainer-avatar" style="display:flex;align-items:center;justify-content:center;background:rgba(230,57,70,.12);font-size:1rem;font-weight:700">'+initials+'</div>';
+    return '<div class="trainer-card">'+photo+'<div class="trainer-name">'+(t.displayName||t.name||'Trainer')+'</div><div class="trainer-role">'+(t.specialty||t.bio||'Trainer')+'</div><div class="trainer-time">'+(t.email||'')+'</div><button class="book-btn" onclick="document.querySelector(\'[data-panel=panel-trainer-links]\').click()">Manage</button></div>';
+  }).join('');
+}
+
+// ── Live classes from backend ─────────────────────────────────────────────────
+function renderAdminClassesToday(classes){
+  var box=document.getElementById('admin-classes-today');if(!box)return;
+  if(!classes||!classes.length){
+    box.innerHTML='<span>No classes scheduled. <strong style="color:var(--red);cursor:pointer" onclick="document.querySelector(\'[data-panel=panel-classes]\').click()">Create one</strong></span>';
+    return;
+  }
+  var today=new Date().toDateString();
+  var todayClasses=classes.filter(function(c){
+    if(!c.date&&!c.scheduledAt)return true;
+    var d=c.date||c.scheduledAt;
+    return new Date(d).toDateString()===today;
+  });
+  if(!todayClasses.length){
+    box.innerHTML='<span>No classes today. <strong style="color:var(--red);cursor:pointer" onclick="document.querySelector(\'[data-panel=panel-classes]\').click()">Manage Classes</strong></span>';
+    return;
+  }
+  box.innerHTML=todayClasses.slice(0,4).map(function(c){
+    var time=c.time||c.scheduledAt?(new Date(c.scheduledAt||c.time)).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):'TBD';
+    var spots=c.capacity?(((c.participants?Object.keys(c.participants).length:0))+'/'+c.capacity+' spots'):'';
+    return '<div class="class-row"><div class="c-dot" style="background:var(--red)"></div><div class="c-info"><div class="c-name">'+(c.name||c.title||'Class')+'</div><div class="c-time">'+time+(spots?' · '+spots:'')+'</div></div><button class="c-btn join" onclick="document.querySelector(\'[data-panel=panel-classes]\').click()">Manage</button></div>';
+  }).join('');
+}
+
+// ── Top search bar actions ───────────────────────────────────────────────────
+var ADMIN_SEARCH_ALIASES={
+  dashboard:'nav-dashboard',home:'nav-dashboard',main:'nav-dashboard',
+  overview:'panel-overview',stats:'panel-overview',analytics:'panel-overview',
+  members:'panel-members',member:'panel-members',clients:'panel-members',client:'panel-members',
+  memberships:'panel-memberships',membership:'panel-memberships',plans:'panel-memberships',plan:'panel-memberships',
+  store:'panel-store',shop:'panel-store',products:'panel-store',items:'panel-store',
+  finances:'panel-finances',finance:'panel-finances',revenue:'panel-finances',expenses:'panel-finances',transactions:'panel-finances',profit:'panel-finances',
+  admins:'panel-admins',admin:'panel-admins',settings:'panel-admins',
+  trainers:'panel-trainer-links',trainer:'panel-trainer-links','trainer links':'panel-trainer-links',links:'panel-trainer-links',
+  classes:'panel-classes',class:'panel-classes',schedule:'panel-classes',
+  messenger:'panel-messenger',messages:'panel-messenger',message:'panel-messenger',chat:'panel-messenger'
+};
+
+function getAdminSearchTargets(){
+  return Array.prototype.slice.call(document.querySelectorAll('#dashboard-home .stat-card,#dashboard-home .prog-card,#dashboard-home .trainer-card,#dashboard-home .overview-card,#dashboard-home .r-card,#dashboard-home .sec-head'));
+}
+
+function clearAdminSearchState(){
+  getAdminSearchTargets().forEach(function(el){el.classList.remove('search-dim','search-hit','search-hit-scroll');});
+  document.querySelectorAll('.xgym-panel .search-hit,.xgym-panel .search-dim,.xgym-panel .search-hit-scroll').forEach(function(el){el.classList.remove('search-hit','search-dim','search-hit-scroll');});
+}
+
+function goToAdminSearchDestination(key){
+  if(!key)return false;
+  var target=ADMIN_SEARCH_ALIASES[key.toLowerCase()];
+  if(!target)return false;
+  if(target==='nav-dashboard'){
+    var dash=document.getElementById('nav-dashboard');
+    if(dash){dash.click();return true;}
+    return false;
+  }
+  var nav=document.querySelector('.nav-item[data-panel="'+target+'"]');
+  if(nav){nav.click();return true;}
+  return false;
+}
+
+function applyDashboardSearch(query){
+  var targets=getAdminSearchTargets();
+  if(!query){clearAdminSearchState();return 0;}
+  var q=query.toLowerCase();
+  var hits=[];
+  targets.forEach(function(el){
+    var hay=(el.textContent||'').toLowerCase();
+    var match=hay.indexOf(q)!==-1;
+    el.classList.toggle('search-hit',match);
+    el.classList.toggle('search-dim',!match);
+    if(match){el.classList.add('search-hit-scroll');hits.push(el);} else {el.classList.remove('search-hit-scroll');}
+  });
+  return hits.length;
+}
+
+function applyVisiblePanelSearch(query){
+  var panel=[].find.call(document.querySelectorAll('.xgym-panel'),function(p){return p.style.display==='block';});
+  if(!panel)return 0;
+  var blocks=Array.prototype.slice.call(panel.querySelectorAll('.card,h2,h3,.class-row,button,p,div')).filter(function(el){
+    return (el.textContent||'').trim().length>0&&el.children.length<12;
+  });
+  if(!query){
+    blocks.forEach(function(el){el.classList.remove('search-hit','search-dim','search-hit-scroll');});
+    return 0;
+  }
+  var q=query.toLowerCase();
+  var hits=[];
+  blocks.forEach(function(el){
+    var match=(el.textContent||'').toLowerCase().indexOf(q)!==-1;
+    el.classList.toggle('search-hit',match);
+    el.classList.toggle('search-dim',!match);
+    if(match){el.classList.add('search-hit-scroll');hits.push(el);} else {el.classList.remove('search-hit-scroll');}
+  });
+  return hits.length;
+}
+
+function runAdminSearch(query,opts){
+  opts=opts||{};
+  var input=document.querySelector('.nav-search');
+  if(input)input.classList.toggle('search-active',!!query);
+  clearAdminSearchState();
+  if(!query)return;
+
+  var dashboardHome=document.getElementById('dashboard-home');
+  var homeVisible=dashboardHome&&dashboardHome.style.display!=='none';
+  var hits=homeVisible?applyDashboardSearch(query):applyVisiblePanelSearch(query);
+  if(hits>0){
+    var first=document.querySelector('.search-hit-scroll');
+    if(first&&opts.scroll!==false)first.scrollIntoView({behavior:'smooth',block:'nearest'});
+    return;
+  }
+
+  if(opts.allowNavigate!==false){
+    var normalized=query.trim().toLowerCase();
+    if(goToAdminSearchDestination(normalized))return;
+    var words=normalized.split(/\s+/).filter(Boolean);
+    for(var i=0;i<words.length;i++){if(goToAdminSearchDestination(words[i]))return;}
+  }
+}
+
+// ── Member of the Day scoring ────────────────────────────────────────────────
+function _motdArray(v){return Array.isArray(v)?v:[]}
+function _motdClientSpend(stats, clientId){
+  return _motdArray(stats.memberships).filter(function(m){return m&&m.clientId===clientId;}).reduce(function(sum,m){return sum+(Number(m.price)||0)},0);
+}
+function _motdTrainerLinks(stats, clientId){
+  return _motdArray(stats.trainerLinks).filter(function(link){
+    if(!link||link.clientId!==clientId)return false;
+    return !link.status||link.status==='active'||link.status==='accepted';
+  }).length;
+}
+function _motdLatestTs(items){
+  return _motdArray(items).reduce(function(max,item){
+    var ts=Number(item&&item.createdAt)||Number(item&&item.updatedAt)||0;
+    return ts>max?ts:max;
+  },0);
+}
+async function computeMemberOfTheDay(stats){
+  var clients=_motdArray(stats.members).filter(function(m){return m&&m.role==='client';});
+  if(!clients.length)return null;
+
+  var ranked=await Promise.all(clients.map(async function(client){
+    var progress=typeof getProgress==='function'?await getProgress(client.id).catch(function(){return [];}):[];
+    var workouts=typeof getClientWorkouts==='function'?await getClientWorkouts(client.id).catch(function(){return [];}):[];
+    var trainingLogs=_motdArray(progress).length+_motdArray(workouts).length;
+    var spend=_motdClientSpend(stats,client.id);
+    var activeMembership=_motdArray(stats.memberships).some(function(m){return m&&m.clientId===client.id&&m.status==='active';});
+    var trainerLinks=_motdTrainerLinks(stats,client.id);
+    var lastActivity=Math.max(_motdLatestTs(progress),_motdLatestTs(workouts),Number(client.updatedAt)||0,Number(client.createdAt)||0);
+    var daysSinceLast=Math.max(0,Math.floor((Date.now()-lastActivity)/86400000));
+    var recencyBonus=Math.max(0,18-Math.min(daysSinceLast,18));
+    var score=(trainingLogs*20)+(spend*1.2)+(trainerLinks*18)+(activeMembership?35:0)+recencyBonus;
+    return {
+      client:client,
+      score:score,
+      trainingLogs:trainingLogs,
+      spend:spend,
+      trainerLinks:trainerLinks,
+      activeMembership:activeMembership,
+      lastActivity:lastActivity
     };
+  }));
 
-    const NotificationManager = {
-        notifications: { messenger: 0, members: 0, memberships: 0, 'trainer-links': 0 },
+  ranked.sort(function(a,b){
+    if(b.score!==a.score)return b.score-a.score;
+    if(b.trainingLogs!==a.trainingLogs)return b.trainingLogs-a.trainingLogs;
+    if(b.spend!==a.spend)return b.spend-a.spend;
+    return (b.lastActivity||0)-(a.lastActivity||0);
+  });
+  return ranked[0]||null;
+}
 
-        init() {
-            this.updateAllBadges();
-            this.setupPanelListeners();
-        },
-
-        addNotification(type, count) {
-            count = (count === undefined) ? 1 : count;
-            if (Object.prototype.hasOwnProperty.call(this.notifications, type)) {
-                this.notifications[type] += count;
-                this.updateBadge(type);
-            }
-        },
-
-        clearNotification(type) {
-            if (Object.prototype.hasOwnProperty.call(this.notifications, type)) {
-                this.notifications[type] = 0;
-                this.updateBadge(type);
-            }
-        },
-
-        updateBadge(type) {
-            const badge = document.getElementById('notif-' + type);
-            if (!badge) return;
-            const count = this.notifications[type];
-            badge.textContent = count > 99 ? '99+' : count;
-            badge.classList.toggle('hidden', count === 0);
-        },
-
-        updateAllBadges() {
-            Object.keys(this.notifications).forEach(t => this.updateBadge(t));
-        },
-
-        setupPanelListeners() {
-            document.querySelectorAll('.nav-item[data-panel]').forEach(navItem => {
-                navItem.addEventListener('click', () => {
-                    const type = PANEL_MAP[navItem.getAttribute('data-panel')];
-                    if (type) this.clearNotification(type);
-                });
-            });
-        }
-    };
-
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', () => NotificationManager.init());
-    } else {
-        NotificationManager.init();
+// ── Fetch from backend after Firebase is ready ────────────────────────────────
+(function waitForBackend(){
+  var attempts=0;
+  var timer=setInterval(function(){
+    attempts++;
+    var currentUser=(typeof auth!=='undefined'&&auth&&auth.currentUser)?auth.currentUser:(firebase&&firebase.auth?firebase.auth().currentUser:null);
+    if(currentUser&&!window.__adminIdentityLoaded){
+      if(typeof getUserProfile==='function'){
+        getUserProfile(currentUser.uid,currentUser.email).then(function(profile){
+          applyAdminIdentity(profile||null,currentUser);
+        }).catch(function(){
+          applyAdminIdentity(null,currentUser);
+        });
+      }else{
+        applyAdminIdentity(null,currentUser);
+      }
+      window.__adminIdentityLoaded=true;
     }
-
-    window.XGymNotifications = NotificationManager;
+    if(typeof getAvailableTrainers==='function'&&typeof getClasses==='function'){
+      clearInterval(timer);
+      getAvailableTrainers().then(function(data){renderAdminTrainers(data)}).catch(function(){});
+      getClasses().then(function(data){renderAdminClassesToday(data);renderAttendanceHeatmap(data)}).catch(function(){});
+      // Populate dashboard stat cards
+      getAdminStats().then(function(stats){
+        var sm=document.getElementById('stat-members');if(sm)sm.textContent=stats.totalMembers||0;
+        var sc=document.getElementById('stat-checkins');if(sc)sc.textContent=stats.activeMemberships||0;
+        var sr=document.getElementById('stat-revenue');if(sr)sr.textContent='£'+(stats.totalRevenue||0).toFixed(0);
+        var st=document.getElementById('stat-trainers');if(st)st.textContent=stats.trainerClientLinks||0;
+        var ss1=document.getElementById('stat-members-sub');if(ss1)ss1.textContent=(stats.totalClients||0)+' clients · '+(stats.totalTrainers||0)+' trainers';
+        var ss2=document.getElementById('stat-memberships-sub');if(ss2)ss2.textContent=(stats.expiredMemberships||0)+' expired';
+        var ss3=document.getElementById('stat-revenue-sub');if(ss3)ss3.textContent='Expenses: £'+(stats.totalExpenses||0).toFixed(0)+' · Net: £'+(stats.netProfit||0).toFixed(0);
+        var ss4=document.getElementById('stat-trainers-sub');if(ss4)ss4.textContent=(stats.totalTrainers||0)+' trainers registered';
+        computeMemberOfTheDay(stats).then(function(top){
+          if(!top)return;
+          var m=top.client||{};
+          var mn=document.getElementById('motd-name');if(mn)mn.textContent=m.name||m.displayName||'Member';
+          var ms=document.getElementById('motd-stat');if(ms)ms.textContent=top.trainingLogs+' training log'+(top.trainingLogs===1?'':'s')+' · £'+top.spend.toFixed(0)+' invested';
+        }).catch(function(){
+          if(stats.members&&stats.members.length){
+            var sorted=stats.members.slice().sort(function(a,b){return (b.createdAt||0)-(a.createdAt||0)});
+            var m=sorted[0];
+            var mn=document.getElementById('motd-name');if(mn)mn.textContent=m.name||m.displayName||'Member';
+            var ms=document.getElementById('motd-stat');if(ms)ms.textContent='Total members: '+stats.totalMembers;
+          }
+        });
+      }).catch(function(){});
+    }
+    if(attempts>40)clearInterval(timer);
+  },250);
 })();
 </script>
-
 </body>
 </html>

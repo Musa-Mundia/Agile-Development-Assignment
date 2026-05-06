@@ -1595,7 +1595,17 @@ async function getAllMembershipPayments() {
  */
 async function recordTransaction(txn) {
   const ref = db.ref("transactions").push();
-  await ref.set({ ...txn, createdAt: Date.now() });
+  await ref.set({
+    type: txn?.type || "income",
+    amount: Number(txn?.amount) || 0,
+    description: String(txn?.description || "").trim(),
+    category: String(txn?.category || "").trim(),
+    clientId: String(txn?.clientId || "").trim(),
+    method: String(txn?.method || "").trim(),
+    summary: String(txn?.summary || "").trim(),
+    items: Array.isArray(txn?.items) ? txn.items : [],
+    createdAt: Date.now()
+  });
   return ref.key;
 }
 
@@ -1606,12 +1616,49 @@ async function createStorePurchase(clientId, data) {
 }
 
 async function getClientStorePurchases(clientId) {
-  const snap = await db.ref("store_purchases/" + clientId).once("value");
-  if (!snap.exists()) return [];
+  const [storeSnap, txSnap] = await Promise.all([
+    db.ref("store_purchases/" + clientId).once("value"),
+    db.ref("transactions").once("value")
+  ]);
+
   const result = [];
-  snap.forEach(child => result.push({ id: child.key, ...child.val() }));
-  result.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-  return result;
+
+  if (storeSnap.exists()) {
+    storeSnap.forEach(child => result.push({ id: child.key, ...child.val(), _source: "store_purchases" }));
+  }
+
+  if (txSnap.exists()) {
+    txSnap.forEach(child => {
+      const t = child.val() || {};
+      if (t.type !== "store_purchase") return;
+      const belongsToClient = (String(t.clientId || "") === String(clientId || "")) || !t.clientId;
+      if (!belongsToClient) return;
+      result.push({
+        id: "txn-" + child.key,
+        total: Number(t.amount) || 0,
+        method: t.method || "card",
+        summary: t.summary || t.description || "Store purchase",
+        items: Array.isArray(t.items) ? t.items : [],
+        createdAt: Number(t.createdAt) || 0,
+        _source: "transactions"
+      });
+    });
+  }
+
+  // De-duplicate near-identical entries (same amount within ~5s window).
+  const seen = new Set();
+  const deduped = [];
+  result.forEach(p => {
+    const total = Number(p.total) || 0;
+    const bucket = Math.floor((Number(p.createdAt) || 0) / 5000);
+    const key = `${total}|${bucket}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    deduped.push(p);
+  });
+
+  deduped.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  return deduped;
 }
 
 /**
@@ -2336,6 +2383,7 @@ async function initClientPage() {
   {
     // Page loaded successfully — clear any redirect loop counter
     _clearRedirectLoop();
+    window._currentClientId = user.uid;
 
     // Populate greeting
     const greeting = document.getElementById("client-greeting");
@@ -3879,11 +3927,16 @@ async function _loadCartPanel(uid) {
               type: "store_purchase",
               amount: totalNow,
               description: "Cart purchase: " + latestCart.map(i => `${i.name} x${i.qty}`).join(", "),
-              category: "store"
+              category: "store",
+              clientId: uid || auth?.currentUser?.uid || firebase.auth()?.currentUser?.uid || "",
+              method: useNewCard ? "card" : (defaultCard ? "saved_card" : "card"),
+              summary: latestCart.map(i => `${i.name} × ${i.qty}`).join(", "),
+              items: latestCart.map(i => ({ id: i.id, name: i.name, qty: i.qty, price: Number(i.price) || 0 }))
             });
 
-            if (uid) {
-              await createStorePurchase(uid, {
+            const effectiveUid = uid || auth?.currentUser?.uid || firebase.auth()?.currentUser?.uid;
+            if (effectiveUid) {
+              await createStorePurchase(effectiveUid, {
                 total: totalNow,
                 method: useNewCard ? "card" : (defaultCard ? "saved_card" : "card"),
                 items: latestCart.map(i => ({ id: i.id, name: i.name, qty: i.qty, price: Number(i.price) || 0 })),
@@ -4717,8 +4770,8 @@ async function _loadPickTrainerPanel(clientId) {
   };
 
   panel.innerHTML = `
-    <h2 style="color:${ui.heading}">Gym Offerings · Pick a Trainer</h2>
-    <p style="color:${ui.muted};margin-bottom:16px">Browse gym trainers by specialty, rating, and availability. Select the perfect coach for your fitness journey.</p>
+    <h2 style="color:${ui.heading}">Trainers ⊞</h2>
+    <p style="color:${ui.muted};margin-bottom:16px">Find your coach by specialty and compare pricing.</p>
 
     <!-- Filter Bar -->
     <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:24px">
@@ -4744,7 +4797,19 @@ async function _loadPickTrainerPanel(clientId) {
       </select>
     </div>
 
-    <div id="pt-trainer-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:20px"></div>
+    <div id="pt-grid-wrap" style="position:relative;margin-bottom:8px">
+      <button id="pt-scroll-left" aria-label="Scroll left"
+        style="position:absolute;left:6px;top:50%;transform:translateY(-50%);z-index:5;
+               width:34px;height:34px;border:none;border-radius:999px;display:none;
+               align-items:center;justify-content:center;cursor:pointer;
+               background:rgba(8,135,226,0.15);color:${ui.heading};font-size:20px;line-height:1">‹</button>
+      <div id="pt-trainer-grid" style="display:flex;flex-wrap:nowrap;overflow-x:auto;gap:20px;scroll-behavior:smooth;padding:4px 42px"></div>
+      <button id="pt-scroll-right" aria-label="Scroll right"
+        style="position:absolute;right:6px;top:50%;transform:translateY(-50%);z-index:5;
+               width:34px;height:34px;border:none;border-radius:999px;display:none;
+               align-items:center;justify-content:center;cursor:pointer;
+               background:rgba(8,135,226,0.15);color:${ui.heading};font-size:20px;line-height:1">›</button>
+    </div>
 
     <!-- Trainer Detail Modal (hidden) -->
     <div id="pt-modal-overlay" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;
@@ -4878,7 +4943,7 @@ async function _loadPickTrainerPanel(clientId) {
     grid.innerHTML = "";
 
     if (trainerList.length === 0) {
-      grid.innerHTML = `<p style="grid-column:1/-1;color:${ui.muted}">No trainers match your filters.</p>`;
+      grid.innerHTML = `<p style="color:${ui.muted};padding:8px 0">No trainers match your filters.</p>`;
       return;
     }
 
@@ -4893,6 +4958,7 @@ async function _loadPickTrainerPanel(clientId) {
                     (Number(t.rating) % 1 >= 0.5 ? "\u00BD" : "");
       const card = document.createElement("div");
       card.style.cssText = `
+        flex:0 0 340px;min-width:340px;
         background:${ui.cardBg};border:${ui.cardBorder};
         border-radius:14px;padding:24px;cursor:pointer;transition:0.4s;
         box-shadow:${ui.cardShadow};position:relative;overflow:hidden;
@@ -5227,6 +5293,18 @@ async function _loadPickTrainerPanel(clientId) {
   // Event listeners for filters
   document.getElementById("pt-filter-specialty").addEventListener("change", () => renderTrainerCards(applyFilters()));
   document.getElementById("pt-sort").addEventListener("change", () => renderTrainerCards(applyFilters()));
+
+  const ptGrid = document.getElementById("pt-trainer-grid");
+  const ptLeft = document.getElementById("pt-scroll-left");
+  const ptRight = document.getElementById("pt-scroll-right");
+  if (ptGrid && ptLeft && ptRight) {
+    const showArrows = () => { ptLeft.style.display = "flex"; ptRight.style.display = "flex"; };
+    const hideArrows = () => { ptLeft.style.display = "none"; ptRight.style.display = "none"; };
+    ptGrid.addEventListener("mouseenter", showArrows);
+    ptGrid.addEventListener("mouseleave", hideArrows);
+    ptLeft.addEventListener("click", () => ptGrid.scrollBy({ left: -340, behavior: "smooth" }));
+    ptRight.addEventListener("click", () => ptGrid.scrollBy({ left: 340, behavior: "smooth" }));
+  }
 
   // Initial render
   renderTrainerCards(applyFilters());
@@ -9149,7 +9227,7 @@ async function _loadAdminClassesPanel() {
           <select id="ac-trainer" style="${inputStyle}"><option value="">— Trainer —</option>${trainerOpts}</select>
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px;margin-bottom:12px">
-          <select id="ac-day" style="${inputStyle}">${dayOpts}</select>
+          <select id="ac-day" style="${inputStyle}"><option value="">— Day —</option>${DAYS.map((d, i) => `<option value="${d}" ${i === 0 ? "selected" : ""}>${d}</option>`).join("")}</select>
           <input id="ac-time" type="time" style="${inputStyle}">
           <input id="ac-duration" type="number" min="15" max="180" placeholder="Duration (min)" value="60" style="${inputStyle}">
           <input id="ac-capacity" type="number" min="1" placeholder="Capacity" value="20" style="${inputStyle}">
@@ -9334,7 +9412,7 @@ async function _loadAdminClassesPanel() {
   document.getElementById("ac-create-btn").addEventListener("click", async () => {
     const name = document.getElementById("ac-name").value.trim();
     const type = document.getElementById("ac-type").value || "General";
-    const day  = document.getElementById("ac-day").value;
+    const day  = document.getElementById("ac-day").value.trim();
     const time = document.getElementById("ac-time").value;
     const duration = parseInt(document.getElementById("ac-duration").value) || 60;
     const location = document.getElementById("ac-location").value.trim();
@@ -9345,6 +9423,7 @@ async function _loadAdminClassesPanel() {
     const trainerName = trainerSel.selectedOptions[0]?.dataset.name || "";
     const capacity = parseInt(document.getElementById("ac-capacity").value) || 20;
     if (!name) { showToast("Enter a class name.", "error"); return; }
+    if (!day) { showToast("Select a day.", "error"); return; }
     if (!time) { showToast("Select a time.", "error"); return; }
     if (!trainerId) { showToast("Select a trainer.", "error"); return; }
     try {
