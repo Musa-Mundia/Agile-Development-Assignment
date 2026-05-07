@@ -717,8 +717,9 @@ footer {
 
 <footer>© 2025 The Gym Birmingham · All rights reserved</footer>
 
-<!-- Firebase SDK — used by openHistory() to fetch real purchase records -->
+<!-- Firebase SDK — Auth + Database -->
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
 <script>
 var db = null;
@@ -736,6 +737,38 @@ try {
   }
   db = firebase.database();
 } catch(e) {}
+
+/* AUTH GATE
+   Fast path: session already written by _openStore() — skip the async check.
+   Slow path: wait for Firebase Auth to resolve; redirect to login if no user. */
+(function() {
+  var hasSession = false;
+  try { hasSession = !!sessionStorage.getItem('xgym_user'); } catch(e) {}
+  if (hasSession) return; /* already authenticated via session */
+
+  /* Show a brief "Checking login…" overlay until Firebase Auth resolves */
+  var overlay = document.createElement('div');
+  overlay.id = 'authGateOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:#0f0f0f;z-index:99999;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;';
+  overlay.innerHTML = '<div style="width:40px;height:40px;border:3px solid rgba(230,57,70,0.3);border-top-color:#e63946;border-radius:50%;animation:spin 0.8s linear infinite;"></div><p style="color:#aaa;font-family:\'Exo 2\',sans-serif;font-size:0.9rem;">Checking login…</p><style>@keyframes spin{to{transform:rotate(360deg)}}</style>';
+  document.body.appendChild(overlay);
+
+  try {
+    firebase.auth().onAuthStateChanged(function(user) {
+      if (user) {
+        /* Logged in via Firebase — remove overlay and continue */
+        overlay.remove();
+      } else {
+        /* Not logged in — bounce back to homepage with login prompt */
+        try { sessionStorage.setItem('xgym_post_login', 'store'); } catch(e) {}
+        window.location.href = 'index.html';
+      }
+    });
+  } catch(e) {
+    /* If Firebase auth is unavailable, fall through and let the page load */
+    overlay.remove();
+  }
+})();
 </script>
 
 <!--
@@ -1246,6 +1279,10 @@ function renderCardForm() {
 
   return `
     ${savedSection}
+    <div style="background:rgba(76,175,80,0.12);border:1px solid rgba(76,175,80,0.35);border-radius:8px;padding:10px 14px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+      <span style="font-size:0.82rem;color:var(--text-muted,#aaa);">&#x1F9EA; Test mode — use simulated card details</span>
+      <button type="button" onclick="_xgym_fillTestCard()" style="background:rgba(76,175,80,0.25);border:1px solid rgba(76,175,80,0.5);color:#4caf50;font-size:0.78rem;font-weight:600;padding:4px 12px;border-radius:6px;cursor:pointer;white-space:nowrap;">Fill test card</button>
+    </div>
     <div class="form-field">
       <label class="form-label">Card number</label>
       <input class="form-input" id="cardNum" placeholder="1234 5678 9012 3456" maxlength="19"
@@ -1280,6 +1317,23 @@ function renderCardForm() {
       Save card for future payments
     </label>
   `;
+}
+
+/* Fills all card fields with pre-set test data for demo/simulation purposes */
+function _xgym_fillTestCard() {
+  const numEl  = document.getElementById('cardNum');
+  const nameEl = document.getElementById('cardName');
+  const expEl  = document.getElementById('cardExp');
+  const cvvEl  = document.getElementById('cardCvv');
+  if (!numEl) return;
+  numEl.value  = '4242 4242 4242 4242';
+  nameEl.value = 'TEST USER';
+  expEl.value  = '12/28';
+  cvvEl.value  = '123';
+  if (document.getElementById('saveCard')) document.getElementById('saveCard').checked = false;
+  /* Deselect any saved-card radio so validation uses these values */
+  const newRadio = document.querySelector('input[name="savedCard"][value="new"]');
+  if (newRadio) newRadio.checked = true;
 }
 
 /* Fill card fields when a saved card radio is selected */
@@ -1624,6 +1678,54 @@ document.addEventListener('keydown', e => {
   */
 renderProducts();
 const cart = new ShoppingCart();
+
+/* LIVE STORE SYNC
+   Fetch store items directly from Firebase so the product grid always reflects
+   the latest items added or edited in the admin panel, not just the snapshot
+   written at login time via _openStore().  Falls back silently if unavailable. */
+(function() {
+  function _refreshProducts(snapItems) {
+    if (!snapItems || !snapItems.length) return;
+    SHOP_ITEMS = snapItems.map(_normalizeStoreItem);
+    try { sessionStorage.setItem('xgym_store_items', JSON.stringify(snapItems)); } catch(e) {}
+    renderProducts();
+  }
+
+  try {
+    firebase.auth().onAuthStateChanged(function(user) {
+      if (!user || !db) return;
+      db.ref('store_items').once('value').then(function(snap) {
+        if (!snap.exists()) return;
+        var items = [];
+        snap.forEach(function(child) { items.push({ id: child.key, ...child.val() }); });
+        _refreshProducts(items);
+      }).catch(function() {});
+    });
+  } catch(e) {}
+})();
+
+/* POST-LOGIN PLAN AUTO-ADD
+   If the user arrived here by clicking a membership tier on the homepage,
+   auto-add that plan to the cart and clear the flag so it doesn't repeat. */
+(function() {
+  try {
+    var raw = sessionStorage.getItem('xgym_post_login_plan');
+    if (!raw) return;
+    sessionStorage.removeItem('xgym_post_login_plan');
+    var plan = JSON.parse(raw);
+    if (!plan || !plan.name) return;
+    /* Only add if this plan isn't already in the cart */
+    var already = cart.items.some(function(i) { return i.id === plan.id; });
+    if (!already) {
+      cart.addItem(plan);
+      /* Open the cart panel so the user sees their plan is queued */
+      setTimeout(function() {
+        var w = document.querySelector('.cart-widget');
+        if (w && w.classList.contains('cart-minimized')) toggleCart();
+      }, 400);
+    }
+  } catch(e) {}
+})();
 
 </script>
 </body>

@@ -2609,6 +2609,15 @@ function _initAuthForms() {
             console.error("[X-Gym] Emergency profile creation also failed:", epErr);
           }
         }
+        /* Check if Products link set a post-login flag to go to the store */
+        const postLoginAction = (() => { try { return sessionStorage.getItem("xgym_post_login"); } catch(e) { return null; } })();
+        if (postLoginAction === "store") {
+          try { sessionStorage.removeItem("xgym_post_login"); } catch(e) {}
+          console.log("[X-Gym] Post-login: opening store for", cred.user.uid);
+          await _openStore(cred.user.uid);
+          return;
+        }
+
         console.log("[X-Gym] Redirecting after login to:", target);
         _forceRedirect(target);
       } catch (err) {
@@ -2644,6 +2653,15 @@ function _initAuthForms() {
         registerBtn.textContent = "Registering…";
         await registerUser(emailVal, passwordVal, nameVal, role);
         console.log("[X-Gym] Register done, role:", role, "— redirecting…");
+
+        /* Also honour the post-login store flag on registration */
+        const postLoginReg = (() => { try { return sessionStorage.getItem("xgym_post_login"); } catch(e) { return null; } })();
+        if (postLoginReg === "store") {
+          try { sessionStorage.removeItem("xgym_post_login"); } catch(e) {}
+          const regUser = auth.currentUser;
+          if (regUser) { await _openStore(regUser.uid); return; }
+        }
+
         const target = role === "trainer"
           ? "trainerdashboard.xx.html"
           : "DashboardClient.xxx.html";
@@ -9826,10 +9844,11 @@ function _ensureMessengerStyles() {
   const style = document.createElement("style");
   style.id = "xmsg-styles";
   style.textContent = `
+    /* ── Dark mode (default) ─────────────────────────────────── */
     .xmsg-wrap{background:rgba(0,18,32,0.82);border:1px solid rgba(8,165,226,0.18);border-radius:16px;overflow:hidden}
     .xmsg-head{padding:16px 18px;border-bottom:1px solid rgba(8,165,226,0.14);display:flex;align-items:center;justify-content:space-between;gap:10px}
     .xmsg-head h2{margin:0;color:#9bd9ff;font-family:'Orbitron',monospace;font-size:0.95rem;letter-spacing:0.08em}
-    .xmsg-head p{margin:5px 0 0;opacity:0.68;font-size:0.86rem}
+    .xmsg-head p{margin:5px 0 0;color:rgba(233,248,255,0.68);font-size:0.86rem}
     .xmsg-grid{display:grid;grid-template-columns:minmax(260px,320px) 1fr;min-height:520px}
     .xmsg-left{border-right:1px solid rgba(8,165,226,0.14);background:rgba(0,13,24,0.5);display:flex;flex-direction:column}
     .xmsg-left-list{overflow-y:auto;flex:1}
@@ -9840,24 +9859,26 @@ function _ensureMessengerStyles() {
     .xmsg-row-main{min-width:0;flex:1}
     .xmsg-row-top{display:flex;justify-content:space-between;gap:8px;align-items:center}
     .xmsg-name{font-weight:700;color:#e9f8ff;font-size:0.88rem}
-    .xmsg-role{opacity:0.55;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.05em}
-    .xmsg-snippet{opacity:0.58;font-size:0.8rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+    .xmsg-role{color:rgba(233,248,255,0.55);font-size:0.72rem;text-transform:uppercase;letter-spacing:0.05em}
+    .xmsg-snippet{color:rgba(233,248,255,0.58);font-size:0.8rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
     .xmsg-chip{padding:3px 8px;border-radius:999px;font-size:0.66rem;font-weight:700;text-transform:uppercase;letter-spacing:0.05em}
     .xmsg-chip.pending{background:rgba(233,109,37,0.22);color:#ffb98d}
     .xmsg-chip.ok{background:rgba(0,200,80,0.2);color:#82ffb3}
     .xmsg-right{display:flex;flex-direction:column;min-width:0}
-    .xmsg-thread-head{padding:14px 16px;border-bottom:1px solid rgba(8,165,226,0.14);display:flex;align-items:center;justify-content:space-between;gap:10px}
+    .xmsg-thread-head{padding:14px 16px;border-bottom:1px solid rgba(8,165,226,0.14);display:flex;align-items:center;justify-content:space-between;gap:10px;background:rgba(0,13,24,0.4)}
     .xmsg-thread-title{font-weight:700;color:#dff4ff;font-size:0.95rem}
-    .xmsg-thread-sub{opacity:0.58;font-size:0.78rem;margin-top:2px}
-    .xmsg-thread{padding:14px 16px;overflow-y:auto;flex:1;background:linear-gradient(180deg,rgba(0,13,20,0.45),rgba(0,13,20,0.2))}
-    .xmsg-empty{opacity:0.48;text-align:center;padding:28px 14px}
-    .xmsg-mail{padding:10px 12px;border:1px solid rgba(8,165,226,0.12);border-radius:10px;background:rgba(0,18,32,0.65);margin-bottom:10px}
-    .xmsg-mail.mine{border-color:rgba(8,165,226,0.38);background:rgba(8,135,226,0.18)}
-    .xmsg-mail-top{display:flex;justify-content:space-between;gap:10px;align-items:center;font-size:0.74rem;opacity:0.72;margin-bottom:6px}
-    .xmsg-mail-body{font-size:0.9rem;line-height:1.5;color:#f1f9fe;white-space:pre-wrap;word-break:break-word}
-    .xmsg-compose{padding:12px 14px;border-top:1px solid rgba(8,165,226,0.14);display:flex;gap:10px;background:rgba(0,18,32,0.78)}
-    .xmsg-compose input{flex:1;padding:11px 12px;border-radius:8px;border:1px solid rgba(8,165,226,0.26);background:rgba(0,13,24,0.92);color:#fff;font-family:'Exo 2',sans-serif;outline:none}
+    .xmsg-thread-sub{color:rgba(223,244,255,0.58);font-size:0.78rem;margin-top:2px}
+    .xmsg-thread{padding:14px 16px;overflow-y:auto;flex:1;background:rgba(0,10,18,0.55)}
+    .xmsg-empty{color:rgba(233,248,255,0.48);text-align:center;padding:28px 14px}
+    .xmsg-mail{padding:10px 12px;border:1px solid rgba(8,165,226,0.22);border-radius:10px;background:rgba(4,26,44,0.85);margin-bottom:10px}
+    .xmsg-mail.mine{border-color:rgba(8,165,226,0.5);background:rgba(8,100,200,0.28)}
+    .xmsg-mail-top{display:flex;justify-content:space-between;gap:10px;align-items:center;font-size:0.74rem;color:rgba(233,248,255,0.72);margin-bottom:6px}
+    .xmsg-mail-body{font-size:0.9rem;line-height:1.5;color:#e9f8ff;white-space:pre-wrap;word-break:break-word}
+    .xmsg-compose{padding:12px 14px;border-top:1px solid rgba(8,165,226,0.14);display:flex;gap:10px;background:rgba(0,13,24,0.78)}
+    .xmsg-compose input{flex:1;padding:11px 12px;border-radius:8px;border:1px solid rgba(8,165,226,0.26);background:rgba(0,13,24,0.92);color:#e9f8ff;font-family:'Exo 2',sans-serif;outline:none}
+    .xmsg-compose input::placeholder{color:rgba(233,248,255,0.38)}
     .xmsg-btn{padding:10px 14px;border:none;border-radius:8px;cursor:pointer;color:#fff;font-family:'Orbitron',monospace;font-size:0.72rem;letter-spacing:0.06em}
+    .xmsg-btn:disabled{opacity:0.45;cursor:not-allowed}
     .xmsg-btn.primary{background:linear-gradient(135deg,#0887e2,#006af5)}
     .xmsg-btn.warn{background:linear-gradient(135deg,#e96d25,#ff9a44)}
     .xmsg-btn.soft{background:rgba(8,135,226,0.22);border:1px solid rgba(8,135,226,0.36)}
@@ -9865,9 +9886,40 @@ function _ensureMessengerStyles() {
     .xmsg-invite h4{margin:0 0 8px 0;font-size:0.76rem;font-family:'Orbitron',monospace;color:#ffb98d;letter-spacing:0.05em}
     .xmsg-invite-item{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-top:1px solid rgba(233,109,37,0.18)}
     .xmsg-invite-item:first-of-type{border-top:none}
+
+    /* ── Light mode overrides ────────────────────────────────── */
+    body.light .xmsg-wrap{background:#ffffff;border-color:rgba(0,0,0,0.1)}
+    body.light .xmsg-head{background:#f5f0ea;border-bottom-color:rgba(0,0,0,0.1)}
+    body.light .xmsg-head h2{color:#0887e2}
+    body.light .xmsg-head p{color:rgba(26,16,16,0.62)}
+    body.light .xmsg-left{background:#f0ece6;border-right-color:rgba(0,0,0,0.1)}
+    body.light .xmsg-row{border-bottom-color:rgba(0,0,0,0.07)}
+    body.light .xmsg-row:hover{background:rgba(8,135,226,0.08)}
+    body.light .xmsg-row.active{background:rgba(8,135,226,0.14);border-left-color:#0887e2}
+    body.light .xmsg-name{color:#1a1010}
+    body.light .xmsg-role{color:rgba(26,16,16,0.5)}
+    body.light .xmsg-snippet{color:rgba(26,16,16,0.52)}
+    body.light .xmsg-thread-head{background:#faf7f3;border-bottom-color:rgba(0,0,0,0.1)}
+    body.light .xmsg-thread-title{color:#1a1010}
+    body.light .xmsg-thread-sub{color:rgba(26,16,16,0.55)}
+    body.light .xmsg-thread{background:#f5f0ea}
+    body.light .xmsg-empty{color:rgba(26,16,16,0.45)}
+    body.light .xmsg-mail{background:#ffffff;border-color:rgba(0,0,0,0.12)}
+    body.light .xmsg-mail.mine{background:#e8f4ff;border-color:rgba(8,135,226,0.35)}
+    body.light .xmsg-mail-top{color:rgba(26,16,16,0.6)}
+    body.light .xmsg-mail-body{color:#1a1010}
+    body.light .xmsg-compose{background:#f0ece6;border-top-color:rgba(0,0,0,0.1)}
+    body.light .xmsg-compose input{background:#ffffff;border-color:rgba(0,0,0,0.18);color:#1a1010}
+    body.light .xmsg-compose input::placeholder{color:rgba(26,16,16,0.4)}
+    body.light .xmsg-invite{background:rgba(233,109,37,0.06);border-color:rgba(233,109,37,0.22)}
+    body.light .xmsg-invite h4{color:#c05a18}
+    body.light .xmsg-chip.ok{background:rgba(0,160,60,0.14);color:#006b2a}
+    body.light .xmsg-chip.pending{background:rgba(233,109,37,0.15);color:#9a4010}
+
     @media (max-width: 980px){
       .xmsg-grid{grid-template-columns:1fr}
       .xmsg-left{border-right:none;border-bottom:1px solid rgba(8,165,226,0.14);max-height:270px}
+      body.light .xmsg-left{border-bottom-color:rgba(0,0,0,0.1)}
     }
   `;
   document.head.appendChild(style);
@@ -10800,17 +10852,66 @@ async function _loadAdminMessengerPanel() {
 
   _ensureMessengerStyles();
 
+  /* Inject tab-bar styles once */
+  if (!document.getElementById("xmsg-tabs-styles")) {
+    const ts = document.createElement("style");
+    ts.id = "xmsg-tabs-styles";
+    ts.textContent = `
+      .xmsg-tabs{display:flex;gap:0;border-bottom:1px solid rgba(8,165,226,0.14)}
+      .xmsg-tab{padding:11px 20px;cursor:pointer;font-size:0.8rem;font-weight:700;font-family:'Orbitron',monospace;letter-spacing:0.06em;text-transform:uppercase;color:rgba(233,248,255,0.55);border-bottom:2px solid transparent;margin-bottom:-1px;transition:0.2s}
+      .xmsg-tab:hover{color:#9bd9ff}
+      .xmsg-tab.active{color:#9bd9ff;border-bottom-color:#0887e2}
+      .xmsg-tab-badge{display:inline-block;background:#e63946;color:#fff;font-size:0.62rem;border-radius:999px;padding:1px 6px;margin-left:6px;font-family:'Exo 2',sans-serif;font-weight:700}
+      .xmsg-query-card{padding:14px 16px;border-bottom:1px solid rgba(8,165,226,0.1);cursor:pointer;transition:0.2s}
+      .xmsg-query-card:hover{background:rgba(8,135,226,0.08)}
+      .xmsg-query-card.active{background:rgba(8,135,226,0.18);border-left:3px solid #0887e2}
+      .xmsg-query-card.unread .xmsg-query-subject{font-weight:800;color:#dff4ff}
+      .xmsg-query-subject{font-size:0.88rem;color:#b0d8f5;margin-bottom:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .xmsg-query-from{font-size:0.76rem;color:rgba(176,216,245,0.6)}
+      .xmsg-query-time{font-size:0.72rem;color:rgba(176,216,245,0.45);margin-top:2px}
+      body.light .xmsg-tabs{border-bottom-color:rgba(0,0,0,0.1)}
+      body.light .xmsg-tab{color:rgba(26,16,16,0.5)}
+      body.light .xmsg-tab:hover{color:#0887e2}
+      body.light .xmsg-tab.active{color:#0887e2;border-bottom-color:#0887e2}
+      body.light .xmsg-query-subject{color:#1a1010}
+      body.light .xmsg-query-card.unread .xmsg-query-subject{color:#0887e2}
+      body.light .xmsg-query-from{color:rgba(26,16,16,0.55)}
+      body.light .xmsg-query-time{color:rgba(26,16,16,0.38)}
+      body.light .xmsg-query-card:hover{background:rgba(8,135,226,0.06)}
+      body.light .xmsg-query-card.active{background:rgba(8,135,226,0.12)}
+    `;
+    document.head.appendChild(ts);
+  }
+
   panel.innerHTML = `
     <div class="xmsg-wrap">
       <div class="xmsg-head">
-        <div>
-          <h2>Messenger Admin</h2>
-        </div>
+        <div><h2>Messenger Admin</h2></div>
       </div>
-      <div id="admin-msg-loading" class="xmsg-empty" style="padding:28px">Loading data...</div>
+      <div class="xmsg-tabs">
+        <div class="xmsg-tab active" id="amsg-tab-convos">Conversations</div>
+        <div class="xmsg-tab" id="amsg-tab-queries">Queries <span class="xmsg-tab-badge" id="amsg-queries-badge" style="display:none">0</span></div>
+      </div>
+      <div id="admin-msg-loading" class="xmsg-empty" style="padding:28px">Loading data…</div>
       <div id="admin-msg-content" style="display:none"></div>
+      <div id="admin-msg-queries" style="display:none"></div>
     </div>
   `;
+
+  /* Tab switching */
+  const tabConvos  = document.getElementById("amsg-tab-convos");
+  const tabQueries = document.getElementById("amsg-tab-queries");
+  const paneConvos = document.getElementById("admin-msg-content");
+  const paneQueries= document.getElementById("admin-msg-queries");
+
+  tabConvos.addEventListener("click", () => {
+    tabConvos.classList.add("active");  tabQueries.classList.remove("active");
+    paneConvos.style.display = "block"; paneQueries.style.display = "none";
+  });
+  tabQueries.addEventListener("click", () => {
+    tabQueries.classList.add("active"); tabConvos.classList.remove("active");
+    paneConvos.style.display = "none";  paneQueries.style.display = "block";
+  });
 
   try {
     // Fetch all users
@@ -10939,5 +11040,102 @@ async function _loadAdminMessengerPanel() {
   } catch (e) {
     console.error("[X-Gym] Admin messenger error:", e);
     panel.innerHTML += `<p style="color:#ff4444">Failed to load messenger data: ${e.message}</p>`;
+  }
+
+  /* ── Queries pane ─────────────────────────────────── */
+  try {
+    const qSnap = await db.ref("contact_queries").orderByChild("timestamp").once("value");
+    const queries = [];
+    qSnap.forEach(child => queries.push({ id: child.key, ...child.val() }));
+    /* newest first */
+    queries.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+
+    const unreadCount = queries.filter(q => q.status === "unread").length;
+    const badge = document.getElementById("amsg-queries-badge");
+    if (badge) {
+      badge.textContent = unreadCount > 99 ? "99+" : unreadCount;
+      badge.style.display = unreadCount > 0 ? "inline-block" : "none";
+    }
+
+    if (!queries.length) {
+      paneQueries.innerHTML = `<div class="xmsg-empty" style="padding:32px">No contact queries yet.</div>`;
+    } else {
+      paneQueries.innerHTML = `
+        <div class="xmsg-grid" style="min-height:460px">
+          <aside class="xmsg-left">
+            <div class="xmsg-left-list" id="admin-query-list"></div>
+          </aside>
+          <section class="xmsg-right">
+            <div class="xmsg-thread-head">
+              <div>
+                <div class="xmsg-thread-title" id="admin-query-title">Select a query</div>
+                <div class="xmsg-thread-sub"  id="admin-query-sub">Choose a message from the list.</div>
+              </div>
+              <button class="xmsg-btn soft" id="admin-query-mark-read" style="display:none;font-size:0.7rem">Mark read</button>
+            </div>
+            <div class="xmsg-thread" id="admin-query-detail">
+              <div class="xmsg-empty">No query selected.</div>
+            </div>
+          </section>
+        </div>
+      `;
+
+      const qList   = document.getElementById("admin-query-list");
+      const qDetail = document.getElementById("admin-query-detail");
+      const qTitle  = document.getElementById("admin-query-title");
+      const qSub    = document.getElementById("admin-query-sub");
+      const markReadBtn = document.getElementById("admin-query-mark-read");
+      let selectedQId = "";
+
+      const renderQDetail = () => {
+        const q = queries.find(x => x.id === selectedQId);
+        if (!q) { qTitle.textContent = "Select a query"; qSub.textContent = "Choose a message from the list."; qDetail.innerHTML = `<div class="xmsg-empty">No query selected.</div>`; if(markReadBtn) markReadBtn.style.display="none"; return; }
+        qTitle.textContent = _msgEscape(q.subject || "(No subject)");
+        qSub.textContent   = `From ${_msgEscape(q.name || q.email || "Unknown")} · ${formatDate(q.timestamp)}`;
+        if (markReadBtn) markReadBtn.style.display = q.status === "unread" ? "inline-block" : "none";
+        qDetail.innerHTML = `
+          <article class="xmsg-mail">
+            <div class="xmsg-mail-top">
+              <strong>${_msgEscape(q.name || "Unknown")}</strong>
+              <span>${_msgEscape(formatDate(q.timestamp))}</span>
+            </div>
+            <div class="xmsg-mail-body" style="margin-bottom:10px">${_msgEscape(q.message || "")}</div>
+            <div style="font-size:0.78rem;opacity:0.6"><strong>Email:</strong> ${_msgEscape(q.email || "—")} &nbsp;|&nbsp; <strong>Subject:</strong> ${_msgEscape(q.subject || "—")} &nbsp;|&nbsp; <strong>Status:</strong> <span style="color:${q.status==='unread'?'#ffb98d':'#82ffb3'}">${q.status || "unread"}</span></div>
+          </article>
+        `;
+      };
+
+      const renderQList = () => {
+        qList.innerHTML = queries.map(q => `
+          <div class="xmsg-query-card ${q.status === 'unread' ? 'unread' : ''} ${selectedQId === q.id ? 'active' : ''}" data-id="${_msgEscape(q.id)}">
+            <div class="xmsg-query-subject">${_msgEscape(q.subject || "(No subject)")}</div>
+            <div class="xmsg-query-from">${_msgEscape(q.name || q.email || "Unknown")}</div>
+            <div class="xmsg-query-time">${formatDate(q.timestamp)}</div>
+          </div>`).join("");
+        qList.querySelectorAll(".xmsg-query-card").forEach(row => {
+          row.addEventListener("click", () => { selectedQId = row.dataset.id; renderQList(); renderQDetail(); });
+        });
+      };
+
+      if (markReadBtn) {
+        markReadBtn.addEventListener("click", async () => {
+          const q = queries.find(x => x.id === selectedQId);
+          if (!q || q.status === "read") return;
+          await db.ref("contact_queries/" + selectedQId + "/status").set("read");
+          q.status = "read";
+          const newUnread = queries.filter(x => x.status === "unread").length;
+          if (badge) { badge.textContent = newUnread > 99 ? "99+" : newUnread; badge.style.display = newUnread > 0 ? "inline-block" : "none"; }
+          renderQList(); renderQDetail();
+          showToast("Query marked as read.", "success");
+        });
+      }
+
+      if (queries.length) { selectedQId = queries[0].id; }
+      renderQList();
+      renderQDetail();
+    }
+  } catch (qErr) {
+    console.error("[X-Gym] Failed to load contact queries:", qErr);
+    paneQueries.innerHTML = `<div class="xmsg-empty" style="padding:32px">Could not load queries.</div>`;
   }
 }
