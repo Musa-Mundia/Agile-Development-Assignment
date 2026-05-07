@@ -208,6 +208,11 @@ a { text-decoration: none; color: inherit; }
 .btn-add:active { transform: scale(0.95); }
 /* Green confirmation state when item is added — reverts after 1.5s */
 .btn-add.added { background: var(--success); }
+/* Membership plan state buttons */
+.btn-upgrade   { background: linear-gradient(90deg,#7c4dff,#5c35cc) !important; }
+.btn-upgrade:hover { background: linear-gradient(90deg,#5c35cc,#3f1fa0) !important; }
+.btn-downgrade { background: rgba(255,255,255,0.07) !important; color: rgba(255,255,255,0.55) !important; border: 1px solid rgba(255,255,255,0.18) !important; }
+.btn-current-plan { height:32px;padding:0 14px;border-radius:var(--radius-sm);background:rgba(0,200,83,0.12);color:#00c853;font-size:12px;font-weight:700;letter-spacing:0.04em;border:1px solid rgba(0,200,83,0.3);display:inline-flex;align-items:center;pointer-events:none; }
 
 /*CART WIDGET (SLIDE-OUT PANEL)
    Structure:
@@ -743,6 +748,14 @@ try {
   }
 } catch(e) { /* silently ignore if sessionStorage unavailable */ }
 
+/* Active membership — written by _openStore() in BackendMain.js so the store
+   knows which plan the client currently holds and can show upgrade/downgrade cues. */
+let activeMembership = null;
+try {
+  const _rawMem = sessionStorage.getItem('xgym_active_membership');
+  if (_rawMem && _rawMem !== 'null') activeMembership = JSON.parse(_rawMem);
+} catch(e) {}
+
 /* Demo order history — shown only when logged in with no real orders, or when browsing as a guest */
 const _DEMO_ORDER_HISTORY = [
   { id: 'ORD-0039', date: '2025-02-01', amount: 34.99, method: 'Visa •••• 4242',        status: 'paid',   items: 'Pro Membership × 1' },
@@ -769,6 +782,13 @@ function renderProducts() {
 /* Builds a single product card HTML string.
     JSON.stringify is used to safely pass the item object to onclick.
    The replace(/"/g,"'") converts double-quotes to single so they don't break the HTML attribute. */
+function _cartMemTierRank(n) {
+  const s = String(n || '').toLowerCase();
+  if (s.includes('elite')) return 3;
+  if (s.includes('core')) return 2;
+  if (s.includes('starter') || s.includes('basic')) return 1;
+  return 0;
+}
 function productCard(p) {
   const itemJson = JSON.stringify(p).replace(/"/g, "'");
   const priceLabel = p.isMembership
@@ -776,6 +796,20 @@ function productCard(p) {
     : `£${parseFloat(p.price).toFixed(2)}`;
   const stockNote = (!p.isMembership && p.stock !== undefined && p.stock <= 5)
     ? `<div style="color:#e6b800;font-size:0.75rem;margin-top:2px">Only ${p.stock} left</div>` : '';
+  let addBtn;
+  if (p.isMembership && activeMembership && (activeMembership.status || 'active') === 'active') {
+    const activeRank = _cartMemTierRank(activeMembership.type);
+    const itemRank   = _cartMemTierRank(p.name);
+    if (activeRank === itemRank) {
+      addBtn = `<div class="btn-current-plan">✓ Current Plan</div>`;
+    } else if (itemRank > activeRank) {
+      addBtn = `<button class="btn-add btn-upgrade" id="add-${p.id}" onclick="cart.addItem(${itemJson})">⬆ Upgrade</button>`;
+    } else {
+      addBtn = `<button class="btn-add btn-downgrade" id="add-${p.id}" onclick="cart.addItem(${itemJson})">↓ Downgrade</button>`;
+    }
+  } else {
+    addBtn = `<button class="btn-add" id="add-${p.id}" onclick="cart.addItem(${itemJson})">Add</button>`;
+  }
   return `
   <div class="product-card">
     <div class="product-img-placeholder">${p.icon}</div>
@@ -786,7 +820,7 @@ function productCard(p) {
       ${stockNote}
       <div class="product-footer">
         <div class="product-price">${priceLabel}</div>
-        <button class="btn-add" id="add-${p.id}" onclick="cart.addItem(${itemJson})">Add</button>
+        ${addBtn}
       </div>
     </div>
   </div>`;

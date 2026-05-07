@@ -3741,11 +3741,12 @@ async function _loadClientMembershipPanel(clientId) {
 async function _openStore(uid) {
   try {
     if (uid) {
-      const [profile, cards, plans, storeItems] = await Promise.all([
+      const [profile, cards, plans, storeItems, activeMem] = await Promise.all([
         getUserProfile(uid).catch(() => null),
         getPaymentCards(uid).catch(() => []),
         getMembershipPlans().catch(() => []),
-        getAllStoreItems().catch(() => [])
+        getAllStoreItems().catch(() => []),
+        getMembership(uid).catch(() => null)
       ]);
       const fireUser = auth.currentUser;
       sessionStorage.setItem("xgym_user", JSON.stringify({
@@ -3754,9 +3755,10 @@ async function _openStore(uid) {
         email: fireUser?.email || profile?.email || "",
         role:  profile?.role  || "client"
       }));
-      sessionStorage.setItem("xgym_cards",       JSON.stringify(cards       || []));
-      sessionStorage.setItem("xgym_plans",       JSON.stringify(plans       || []));
-      sessionStorage.setItem("xgym_store_items", JSON.stringify(storeItems  || []));
+      sessionStorage.setItem("xgym_cards",             JSON.stringify(cards       || []));
+      sessionStorage.setItem("xgym_plans",             JSON.stringify(plans       || []));
+      sessionStorage.setItem("xgym_store_items",       JSON.stringify(storeItems  || []));
+      sessionStorage.setItem("xgym_active_membership", JSON.stringify(activeMem   || null));
     }
   } catch (e) { /* proceed anyway */ }
   window.location.href = "XGYM_Cart.html";
@@ -3887,8 +3889,13 @@ async function _loadCartPanel(uid) {
 
   panel.innerHTML = `<div style="text-align:center;padding:30px;opacity:0.5">Loading store…</div>`;
 
-  let storeItems = [];
-  try { storeItems = await getAllStoreItems(); } catch (e) { /* ignore */ }
+  let storeItems = [], activeMembership = null;
+  try {
+    [storeItems, activeMembership] = await Promise.all([
+      getAllStoreItems().catch(() => []),
+      uid ? getMembership(uid).catch(() => null) : Promise.resolve(null)
+    ]);
+  } catch (e) { /* ignore */ }
 
   const iStyle = `padding:9px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:inherit;font-family:inherit;font-size:0.86rem`;
 
@@ -4176,26 +4183,56 @@ async function _loadCartPanel(uid) {
         grid.innerHTML = `<p style="opacity:0.55;grid-column:1/-1">No items found${q ? ' for "' + q + '"' : ""}.</p>`;
         return;
       }
-      grid.innerHTML = filtered.map(item => `
+      function _memTierRank(n) {
+        const s = String(n || "").toLowerCase();
+        if (s.includes("elite")) return 3;
+        if (s.includes("core")) return 2;
+        if (s.includes("starter") || s.includes("basic")) return 1;
+        return 0;
+      }
+      const _activeType = activeMembership ? String(activeMembership.type || "").toLowerCase() : "";
+      const _activeRank = _memTierRank(_activeType);
+
+      grid.innerHTML = filtered.map(item => {
+        const isMembItem = (item.category || "").toLowerCase() === "membership" || !!item.isMembership;
+        const isOut = item.stock != null && Number(item.stock) <= 0;
+        const priceHtml = isMembItem
+          ? `£${(item.price || 0).toFixed(2)}<small style='font-size:0.7em;opacity:0.65'>/mo</small>`
+          : `£${(item.price || 0).toFixed(2)}`;
+        const stockHtml = item.stock != null && !isMembItem ? "Stock: " + item.stock : "";
+        let qtyHtml = "", btnHtml = "";
+        if (isMembItem) {
+          if (activeMembership && (activeMembership.status || "active") === "active") {
+            const itemRank = _memTierRank(item.name);
+            if (_activeRank === itemRank) {
+              btnHtml = `<div style="padding:7px;border-radius:8px;background:rgba(0,200,83,0.12);color:#00c853;font-size:0.83rem;font-weight:600;text-align:center;border:1px solid rgba(0,200,83,0.3)">✓ Current Plan</div>`;
+            } else if (itemRank > _activeRank) {
+              btnHtml = `<button class="cart-add-item-btn" data-id="${item.id}" data-name="${item.name}" data-price="${item.price || 0}" style="padding:7px;border:none;border-radius:8px;background:linear-gradient(90deg,#7c4dff,#5c35cc);color:#fff;cursor:pointer;font-size:0.83rem;font-weight:600">⬆ Upgrade</button>`;
+            } else {
+              btnHtml = `<button class="cart-add-item-btn" data-id="${item.id}" data-name="${item.name}" data-price="${item.price || 0}" style="padding:7px;border:1px solid rgba(255,255,255,0.15);border-radius:8px;background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.55);cursor:pointer;font-size:0.83rem">↓ Downgrade</button>`;
+            }
+          } else {
+            btnHtml = `<button class="cart-add-item-btn" data-id="${item.id}" data-name="${item.name}" data-price="${item.price || 0}" style="padding:7px;border:none;border-radius:8px;background:linear-gradient(90deg,#0887e2,#006af5);color:#fff;cursor:pointer;font-size:0.83rem;font-weight:600">Buy</button>`;
+          }
+        } else if (isOut) {
+          btnHtml = `<button disabled style="padding:7px;border:none;border-radius:8px;background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.3);cursor:not-allowed;font-size:0.83rem;font-weight:600">Out of Stock</button>`;
+        } else {
+          qtyHtml = `<div style="display:flex;align-items:center;gap:6px"><button class="cart-qty-dec" data-id="${item.id}" style="padding:3px 8px;border:1px solid rgba(255,255,255,0.2);border-radius:6px;background:transparent;color:inherit;cursor:pointer">−</button><span id="cart-qty-${item.id}" style="min-width:22px;text-align:center;font-size:0.84rem">1</span><button class="cart-qty-inc" data-id="${item.id}" style="padding:3px 8px;border:1px solid rgba(255,255,255,0.2);border-radius:6px;background:transparent;color:inherit;cursor:pointer">+</button></div>`;
+          btnHtml = `<button class="cart-add-item-btn" data-id="${item.id}" data-name="${item.name}" data-price="${item.price || 0}" style="padding:7px;border:none;border-radius:8px;background:linear-gradient(90deg,#0887e2,#006af5);color:#fff;cursor:pointer;font-size:0.83rem;font-weight:600">Add to Cart</button>`;
+        }
+        return `
         <div class="card" style="cursor:default;display:flex;flex-direction:column;gap:8px;padding:16px">
           <div style="font-size:0.72rem;opacity:0.55;text-transform:uppercase;letter-spacing:1px">${item.category || "General"}</div>
           <strong style="font-size:0.95rem">${item.name}</strong>
           <p style="font-size:0.82rem;opacity:0.7;margin:0;flex:1">${item.description || ""}</p>
           <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px">
-            <span style="font-weight:700;color:#00c853;font-size:1.05rem">£${(item.price || 0).toFixed(2)}</span>
-            <span style="font-size:0.78rem;opacity:0.55">${item.stock != null ? "Stock: " + item.stock : ""}</span>
+            <span style="font-weight:700;color:#00c853;font-size:1.05rem">${priceHtml}</span>
+            <span style="font-size:0.78rem;opacity:0.55">${stockHtml}</span>
           </div>
-          <div style="display:flex;align-items:center;gap:6px">
-            <button class="cart-qty-dec" data-id="${item.id}" style="padding:3px 8px;border:1px solid rgba(255,255,255,0.2);border-radius:6px;background:transparent;color:inherit;cursor:pointer">−</button>
-            <span id="cart-qty-${item.id}" style="min-width:22px;text-align:center;font-size:0.84rem">1</span>
-            <button class="cart-qty-inc" data-id="${item.id}" style="padding:3px 8px;border:1px solid rgba(255,255,255,0.2);border-radius:6px;background:transparent;color:inherit;cursor:pointer">+</button>
-          </div>
-          <button class="cart-add-item-btn" data-id="${item.id}" data-name="${item.name}" data-price="${item.price || 0}" ${item.stock != null && Number(item.stock) <= 0 ? "disabled" : ""}
-            style="padding:7px;border:none;border-radius:8px;background:linear-gradient(90deg,#0887e2,#006af5);color:#fff;cursor:pointer;font-size:0.83rem;font-weight:600">
-            ${item.stock != null && Number(item.stock) <= 0 ? "Out of Stock" : "Add to Cart"}
-          </button>
-        </div>
-      `).join("");
+          ${qtyHtml}
+          ${btnHtml}
+        </div>`;
+      }).join("");
 
       const qtyMap = {};
       filtered.forEach(i => { qtyMap[i.id] = 1; });
