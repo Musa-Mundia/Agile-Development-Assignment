@@ -10,28 +10,29 @@
 
 <style>
 :root {
-  /* Backgrounds — blue aura theme matching index.html */
-  --bg:          #000d14;
-  --surface:     rgba(0,18,32,0.9);
-  --surface2:    rgba(0,18,32,0.95);
+  /* Dashboard dark palette */
+  --bg:          #0f0f0f;
+  --surface:     #181414;
+  --surface2:    #1e1818;
 
-  /* Borders */
-  --border:      rgba(8,165,226,0.1);
-  --border2:     rgba(8,165,226,0.2);
+  /* Borders + nav */
+  --border:      rgba(255,255,255,0.07);
+  --border2:     rgba(230,57,70,0.2);
+  --nav-bg:      rgba(10,7,7,0.97);
 
   /* Brand colours */
-  --accent:      #0887e2;
-  --accent-dark: #006af5;
-  --accent-bg:   rgba(8,165,226,0.1);
-  --accent2:     rgba(8,165,226,0.3);
+  --accent:      #e63946;
+  --accent-dark: #c1121f;
+  --accent-bg:   rgba(230,57,70,0.1);
+  --accent2:     rgba(230,57,70,0.3);
 
   /* Text */
-  --text:        #f1f9fe;
-  --muted:       rgba(241,249,254,0.45);
+  --text:        #f0ece4;
+  --muted:       rgba(240,236,228,0.5);
 
   /* Status colours */
   --success:     #00c850;
-  --danger:      #e96d25;
+  --danger:      #ff0033;
   --warn:        #ffd64a;
 
   /* Layout */
@@ -42,6 +43,30 @@
   /* Fonts */
   --font-d:      'Orbitron', monospace;
   --font-b:      'Exo 2', sans-serif;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg:          #f0ebe3;
+    --surface:     #ffffff;
+    --surface2:    #f7f3ee;
+    --border:      rgba(0,0,0,0.09);
+    --border2:     rgba(230,57,70,0.2);
+    --nav-bg:      rgba(250,246,240,0.98);
+    --text:        #1a1010;
+    --muted:       rgba(26,16,16,0.52);
+  }
+}
+
+body.light {
+  --bg:          #f0ebe3;
+  --surface:     #ffffff;
+  --surface2:    #f7f3ee;
+  --border:      rgba(0,0,0,0.09);
+  --border2:     rgba(230,57,70,0.2);
+  --nav-bg:      rgba(250,246,240,0.98);
+  --text:        #1a1010;
+  --muted:       rgba(26,16,16,0.52);
 }
 
 /*  Reset & Base */
@@ -62,14 +87,14 @@ a { text-decoration: none; color: inherit; }
 
 /*  Custom Scrollbar */
 ::-webkit-scrollbar { width: 8px; }
-::-webkit-scrollbar-track { background: rgba(8,165,226,0.02); }
-::-webkit-scrollbar-thumb { background: rgba(8,165,226,0.3); border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(8,165,226,0.5); }
+::-webkit-scrollbar-track { background: rgba(230,57,70,0.03); }
+::-webkit-scrollbar-thumb { background: rgba(230,57,70,0.3); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(230,57,70,0.5); }
 
 /* NAVIGATION BAR*/
 .nav {
   position: sticky; top: 0; z-index: 100;
-  background: rgba(0,13,20,0.93);
+  background: var(--nav-bg);
   backdrop-filter: blur(14px);
   border-bottom: 1px solid var(--border2);
   display: flex; align-items: center; justify-content: space-between;
@@ -121,9 +146,11 @@ a { text-decoration: none; color: inherit; }
 
 /* HERO SECTION */
 .hero {
-  padding: 5rem 2rem 3.5rem;
+  padding: 4.4rem 2rem 3rem;
   text-align: center;
-  background: radial-gradient(ellipse 80% 55% at 50% 0%, rgba(8,165,226,0.1) 0%, transparent 65%);
+  background:
+    radial-gradient(ellipse 76% 58% at 50% -8%, rgba(230,57,70,0.2) 0%, transparent 62%),
+    linear-gradient(180deg, rgba(230,57,70,0.06) 0%, transparent 100%);
 }
 .hero-tag {
   display: inline-block; margin-bottom: 1rem;
@@ -139,6 +166,32 @@ a { text-decoration: none; color: inherit; }
 /* Highlighted word in the hero uses the accent colour */
 .hero h1 em { font-style: normal; color: var(--accent); }
 .hero p { font-size: 15px; color: var(--muted); max-width: 400px; margin: 0 auto; }
+
+.dash-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px;
+  margin: 0 auto 2rem;
+}
+.dash-tile {
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  border-radius: 12px;
+  padding: 12px 14px;
+}
+.dash-k {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+.dash-v {
+  font-family: var(--font-d);
+  font-size: 21px;
+  font-weight: 800;
+  color: var(--text);
+}
 
 /* SECTION + PRODUCT GRID */
 .section { padding: 3rem 2rem; max-width: 1100px; margin: 0 auto; }
@@ -166,7 +219,7 @@ a { text-decoration: none; color: inherit; }
 .product-card:hover {
   border-color: var(--accent);
   transform: translateY(-4px);
-  box-shadow: 0 8px 24px rgba(8,165,226,0.15);
+  box-shadow: 0 8px 24px rgba(230,57,70,0.18);
 }
 
 .product-img-placeholder {
@@ -208,12 +261,6 @@ a { text-decoration: none; color: inherit; }
 .btn-add:active { transform: scale(0.95); }
 /* Green confirmation state when item is added — reverts after 1.5s */
 .btn-add.added { background: var(--success); }
-/* Membership plan state buttons */
-.btn-upgrade   { background: linear-gradient(90deg,#7c4dff,#5c35cc) !important; }
-.btn-upgrade:hover { background: linear-gradient(90deg,#5c35cc,#3f1fa0) !important; }
-.btn-downgrade { background: rgba(255,255,255,0.07) !important; color: rgba(255,255,255,0.55) !important; border: 1px solid rgba(255,255,255,0.18) !important; }
-.btn-current-plan { height:32px;padding:0 14px;border-radius:var(--radius-sm);background:rgba(0,200,83,0.12);color:#00c853;font-size:12px;font-weight:700;letter-spacing:0.04em;border:1px solid rgba(0,200,83,0.3);display:inline-flex;align-items:center;pointer-events:none; }
-
 /*CART WIDGET (SLIDE-OUT PANEL)
    Structure:
      .cart-widget
@@ -224,12 +271,12 @@ a { text-decoration: none; color: inherit; }
 .cart-widget {
   position: fixed; top: 0; right: 0; bottom: 0;
   width: var(--cart-w); z-index: 200;
-  background: rgba(0,13,20,0.98);
+  background: var(--nav-bg);
   border-left: 1px solid var(--border2);
   display: flex; flex-direction: column;
   transform: translateX(0);
   transition: transform 0.28s cubic-bezier(.4,0,.2,1);
-  box-shadow: -6px 0 36px rgba(8,165,226,0.1);
+  box-shadow: -6px 0 36px rgba(230,57,70,0.14);
 }
 /* Hidden state — slides fully off-screen to the right */
 .cart-widget.cart-minimized { transform: translateX(100%); }
@@ -237,7 +284,7 @@ a { text-decoration: none; color: inherit; }
 .cart-header {
   display: flex; align-items: center; justify-content: space-between;
   padding: 18px 20px; border-bottom: 1px solid var(--border);
-  background: rgba(8,165,226,0.08);
+  background: var(--accent-bg);
 }
 .cart-header h3 { font-family: var(--font-d); font-size: 18px; letter-spacing: 0.04em; font-weight: 700; color: var(--text); }
 .cart-count { font-size: 12px; color: var(--muted); margin-top: 1px; }
@@ -386,7 +433,7 @@ a { text-decoration: none; color: inherit; }
 .modal-backdrop.open { display: flex; }
 
 .modal {
-  background: rgba(0,13,20,0.98); border: 1px solid var(--border2);
+  background: var(--nav-bg); border: 1px solid var(--border2);
   border-radius: 18px; width: 100%; max-width: 500px;
   max-height: 90vh; overflow-y: auto;
   animation: modalIn 0.22s cubic-bezier(.34,1.3,.64,1);
@@ -396,7 +443,7 @@ a { text-decoration: none; color: inherit; }
 .modal-header {
   display: flex; align-items: center; justify-content: space-between;
   padding: 20px 24px 16px; border-bottom: 1px solid var(--border);
-  background: rgba(8,165,226,0.08);
+  background: var(--accent-bg);
 }
 .modal-header h2 { font-family: var(--font-d); font-size: 20px; letter-spacing: 0.04em; font-weight: 900; color: var(--accent); }
 .modal-close {
@@ -423,14 +470,14 @@ a { text-decoration: none; color: inherit; }
 }
 .form-input {
   width: 100%; height: 40px; padding: 0 12px;
-  background: rgba(8,165,226,0.05); border: 1px solid var(--border2);
+  background: var(--accent-bg); border: 1px solid var(--border2);
   border-radius: var(--radius-sm); color: var(--text); font-size: 14px;
   transition: border-color 0.15s;
 }
-.form-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(8,165,226,0.1); }
+.form-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); }
 /* Error state */
 .form-input.error { border-color: var(--danger); }
-.form-input::placeholder { color: rgba(241,249,254,0.25); }
+.form-input::placeholder { color: var(--muted); opacity: 0.7; }
 .form-error { font-size: 11px; color: var(--danger); margin-top: 4px; min-height: 14px; }
 .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 /* Checkbox + label row (e.g. "save card", DD authorisation) */
@@ -466,7 +513,7 @@ a { text-decoration: none; color: inherit; }
   background: transparent; color: var(--muted); font-size: 13px; font-weight: 600;
   transition: all 0.15s;
 }
-.checkout-tab.active { background: var(--surface); color: var(--accent); box-shadow: 0 1px 4px rgba(8,165,226,0.12); }
+.checkout-tab.active { background: var(--surface); color: var(--accent); box-shadow: 0 1px 4px rgba(230,57,70,0.18); }
 
 /* Payment method selector (Card | Direct Debit) */
 .method-row { display: flex; gap: 8px; margin-bottom: 20px; }
@@ -575,28 +622,29 @@ footer {
  -->
 <div class="hero">
   <div class="hero-tag">Now open · Birmingham</div>
-  <h1>TRAIN<br><em>HARDER</em></h1>
-  <p>Memberships, gear, and supplements — everything you need to push further.</p>
+  <h1>STORE<br><em>CONTROL</em></h1>
+  <p>Supplements, equipment and accessories synced with your account and dashboard flow.</p>
 </div>
 
 <!--
      PRODUCT SECTIONS
-     Two grids: Memberships (monthly plans) and Shop (physical items).
-     Products are rendered by JS from the MEMBERSHIPS and SHOP_ITEMS arrays.
-     To add/remove products, edit those arrays in the <script> section below.
+     Two grids: Featured picks and full store catalog.
+     Products are rendered by JS from SHOP_ITEMS.
     -->
 <main class="section">
-  <!-- Memberships section -->
-  <div class="section-head">
-    <h2>Memberships</h2>
-    <span>Monthly · cancel anytime</span>
-  </div>
-  <div class="product-grid" id="membershipGrid"></div>
+  <div class="dash-strip" id="storeStats"></div>
 
-  <!-- Shop section -->
+  <!-- Featured section -->
+  <div class="section-head">
+    <h2>Featured Picks</h2>
+    <span>High-value essentials</span>
+  </div>
+  <div class="product-grid" id="featuredGrid"></div>
+
+  <!-- Catalog section -->
   <div class="section-head" style="margin-top:3rem">
-    <h2>Gym Shop</h2>
-    <span>Equipment &amp; supplements</span>
+    <h2>All Products</h2>
+    <span>Equipment, nutrition and accessories</span>
   </div>
   <div class="product-grid" id="shopGrid"></div>
 </main>
@@ -669,10 +717,31 @@ footer {
 
 <footer>© 2025 The Gym Birmingham · All rights reserved</footer>
 
+<!-- Firebase SDK — used by openHistory() to fetch real purchase records -->
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
+<script>
+var db = null;
+try {
+  if (!firebase.apps.length) {
+    firebase.initializeApp({
+      apiKey: "AIzaSyDynE1tulBXI_ZBDqU9WjOHojRGVpuRodo",
+      authDomain: "agile-development-gym.firebaseapp.com",
+      databaseURL: "https://agile-development-gym-default-rtdb.europe-west1.firebasedatabase.app",
+      projectId: "agile-development-gym",
+      storageBucket: "agile-development-gym.firebasestorage.app",
+      messagingSenderId: "143443368712",
+      appId: "1:143443368712:web:0f79e0f8f613773ab46abd"
+    });
+  }
+  db = firebase.database();
+} catch(e) {}
+</script>
+
 <!--
      JAVASCRIPT
      Sections (in order):
-       1. Product Data          — memberships + shop items arrays
+      1. Product Data          — shop items array
        2. Session / Auth state  — currentUser + ORDER_HISTORY
        3. renderProducts()      — generates product card HTML
        4. ShoppingCart class    — add/remove/qty/total/render/persist
@@ -687,11 +756,6 @@ footer {
 /* PRODUCT DATA
    We can edit these later based on what we agree on*/
 /* Static fallbacks — used when the store is visited directly (no session) */
-const _DEFAULT_MEMBERSHIPS = [
-  { id: 'm1', name: 'Basic Membership',   category: 'Membership', price: 19.99, icon: '🏋️', desc: 'Full gym floor access, lockers, 6AM–10PM daily.',                             durationDays: 30, isMembership: true },
-  { id: 'm2', name: 'Pro Membership',     category: 'Membership', price: 34.99, icon: '⚡', desc: 'Everything in Basic plus group classes and 2 guest passes/month.',          durationDays: 30, isMembership: true },
-  { id: 'm3', name: 'Premium Membership', category: 'Membership', price: 54.99, icon: '👑', desc: 'All-access — sauna, spa, 2 PT sessions/mo, 24/7 entry.',                     durationDays: 30, isMembership: true },
-];
 const _DEFAULT_SHOP_ITEMS = [
   { id: 's1', name: 'Whey Protein 1kg',     category: 'Nutrition',   price: 29.99, icon: '🥛', desc: 'Premium whey blend, 25g protein per serving. Choc & vanilla.' },
   { id: 's2', name: 'Resistance Band Set',  category: 'Equipment',   price: 14.99, icon: '🔴', desc: '5-band progressive resistance kit with carry pouch.' },
@@ -701,12 +765,6 @@ const _DEFAULT_SHOP_ITEMS = [
   { id: 's6', name: 'Gym Bag',              category: 'Accessories', price: 34.99, icon: '🎒', desc: 'Waterproof 35L bag with wet/dry compartment.' },
 ];
 
-/* Normalise a Firebase membership_plan into the shape productCard() expects */
-function _normalizePlan(p) {
-  const icon = parseFloat(p.price) > 60 ? '👑' : parseFloat(p.price) > 35 ? '⚡' : '🏋️';
-  const desc = p.description || (Array.isArray(p.features) ? p.features.slice(0, 3).join(' · ') : '');
-  return { id: p.id, name: p.name, category: 'Membership', price: parseFloat(p.price) || 0, icon, desc, durationDays: p.durationDays || 30, isMembership: true };
-}
 /* Normalise a Firebase store_item into the shape productCard() expects */
 function _normalizeStoreItem(s) {
   const catIcons = { Nutrition: '🥛', Equipment: '🔴', Accessories: '🎒', Clothing: '👕', Supplements: '💊' };
@@ -714,14 +772,11 @@ function _normalizeStoreItem(s) {
 }
 
 /* Load from the session written by _openStore() — fall back to statics if absent */
-let MEMBERSHIPS, SHOP_ITEMS;
+let SHOP_ITEMS;
 try {
-  const rawPlans = sessionStorage.getItem('xgym_plans');
   const rawItems = sessionStorage.getItem('xgym_store_items');
-  MEMBERSHIPS = rawPlans ? JSON.parse(rawPlans).map(_normalizePlan) : null;
   SHOP_ITEMS  = rawItems ? JSON.parse(rawItems).map(_normalizeStoreItem) : null;
 } catch(e) {}
-if (!MEMBERSHIPS || !MEMBERSHIPS.length) MEMBERSHIPS = _DEFAULT_MEMBERSHIPS;
 if (!SHOP_ITEMS  || !SHOP_ITEMS.length)  SHOP_ITEMS  = _DEFAULT_SHOP_ITEMS;
 
 /* SESSION / AUTH STATE
@@ -748,13 +803,9 @@ try {
   }
 } catch(e) { /* silently ignore if sessionStorage unavailable */ }
 
-/* Active membership — written by _openStore() in BackendMain.js so the store
-   knows which plan the client currently holds and can show upgrade/downgrade cues. */
-let activeMembership = null;
-try {
-  const _rawMem = sessionStorage.getItem('xgym_active_membership');
-  if (_rawMem && _rawMem !== 'null') activeMembership = JSON.parse(_rawMem);
-} catch(e) {}
+const _ORDER_HISTORY_KEY = currentUser && currentUser.uid
+  ? `xgym_pending_orders_${currentUser.uid}`
+  : 'xgym_pending_orders_guest';
 
 /* Demo order history — shown only when logged in with no real orders, or when browsing as a guest */
 const _DEMO_ORDER_HISTORY = [
@@ -767,7 +818,7 @@ const _DEMO_ORDER_HISTORY = [
 /* Real order history from sessionStorage (written by this page on checkout, synced by dashboard) */
 let ORDER_HISTORY;
 try {
-  const savedOrders = sessionStorage.getItem('xgym_pending_orders');
+  const savedOrders = sessionStorage.getItem(_ORDER_HISTORY_KEY);
   ORDER_HISTORY = savedOrders ? JSON.parse(savedOrders) : (currentUser ? [] : _DEMO_ORDER_HISTORY);
 } catch(e) { ORDER_HISTORY = currentUser ? [] : _DEMO_ORDER_HISTORY; }
 
@@ -775,41 +826,47 @@ try {
    Generates product card HTML from the data arrays above and injects it
    into the two grid containers in the HTML. */
 function renderProducts() {
-  document.getElementById('membershipGrid').innerHTML = MEMBERSHIPS.map(productCard).join('');
-  document.getElementById('shopGrid').innerHTML       = SHOP_ITEMS.map(productCard).join('');
+  const featured = [...SHOP_ITEMS]
+    .sort((a, b) => {
+      const av = (Number(b.price) || 0) - (Number(a.price) || 0);
+      if (av !== 0) return av;
+      return String(a.name || '').localeCompare(String(b.name || ''));
+    })
+    .slice(0, Math.min(4, SHOP_ITEMS.length));
+
+  document.getElementById('featuredGrid').innerHTML = featured.map(productCard).join('');
+  document.getElementById('shopGrid').innerHTML = SHOP_ITEMS.map(productCard).join('');
+
+  const lowStock = SHOP_ITEMS.filter(i => i.stock != null && Number(i.stock) <= 5).length;
+  const totalStock = SHOP_ITEMS.reduce((sum, i) => sum + (i.stock != null ? Number(i.stock) : 0), 0);
+  const avgPrice = SHOP_ITEMS.length
+    ? (SHOP_ITEMS.reduce((sum, i) => sum + (Number(i.price) || 0), 0) / SHOP_ITEMS.length)
+    : 0;
+  const stats = document.getElementById('storeStats');
+  if (stats) {
+    stats.innerHTML = `
+      <div class="dash-tile"><div class="dash-k">Products</div><div class="dash-v">${SHOP_ITEMS.length}</div></div>
+      <div class="dash-tile"><div class="dash-k">Low Stock</div><div class="dash-v">${lowStock}</div></div>
+      <div class="dash-tile"><div class="dash-k">Units In Stock</div><div class="dash-v">${totalStock}</div></div>
+      <div class="dash-tile"><div class="dash-k">Avg Price</div><div class="dash-v">£${avgPrice.toFixed(2)}</div></div>
+    `;
+  }
 }
 
 /* Builds a single product card HTML string.
     JSON.stringify is used to safely pass the item object to onclick.
    The replace(/"/g,"'") converts double-quotes to single so they don't break the HTML attribute. */
-function _cartMemTierRank(n) {
-  const s = String(n || '').toLowerCase();
-  if (s.includes('elite')) return 3;
-  if (s.includes('core')) return 2;
-  if (s.includes('starter') || s.includes('basic')) return 1;
-  return 0;
-}
 function productCard(p) {
   const itemJson = JSON.stringify(p).replace(/"/g, "'");
-  const priceLabel = p.isMembership
-    ? `£${parseFloat(p.price).toFixed(2)}<small>/mo</small>`
-    : `£${parseFloat(p.price).toFixed(2)}`;
-  const stockNote = (!p.isMembership && p.stock !== undefined && p.stock <= 5)
-    ? `<div style="color:#e6b800;font-size:0.75rem;margin-top:2px">Only ${p.stock} left</div>` : '';
-  let addBtn;
-  if (p.isMembership && activeMembership && (activeMembership.status || 'active') === 'active') {
-    const activeRank = _cartMemTierRank(activeMembership.type);
-    const itemRank   = _cartMemTierRank(p.name);
-    if (activeRank === itemRank) {
-      addBtn = `<div class="btn-current-plan">✓ Current Plan</div>`;
-    } else if (itemRank > activeRank) {
-      addBtn = `<button class="btn-add btn-upgrade" id="add-${p.id}" onclick="cart.addItem(${itemJson})">⬆ Upgrade</button>`;
-    } else {
-      addBtn = `<button class="btn-add btn-downgrade" id="add-${p.id}" onclick="cart.addItem(${itemJson})">↓ Downgrade</button>`;
-    }
-  } else {
-    addBtn = `<button class="btn-add" id="add-${p.id}" onclick="cart.addItem(${itemJson})">Add</button>`;
-  }
+  const priceLabel = `£${parseFloat(p.price).toFixed(2)}`;
+  const stockVal = Number(p.stock);
+  const hasStockInfo = p.stock !== undefined && p.stock !== null && !Number.isNaN(stockVal);
+  const isOutOfStock = hasStockInfo && stockVal <= 0;
+  const stockNote = isOutOfStock
+    ? `<div style="color:var(--danger);font-size:0.75rem;margin-top:2px;font-weight:700">Out of stock</div>`
+    : (hasStockInfo && stockVal <= 5)
+      ? `<div style="color:#e6b800;font-size:0.75rem;margin-top:2px">Only ${stockVal} left</div>`
+      : '';
   return `
   <div class="product-card">
     <div class="product-img-placeholder">${p.icon}</div>
@@ -820,7 +877,7 @@ function productCard(p) {
       ${stockNote}
       <div class="product-footer">
         <div class="product-price">${priceLabel}</div>
-        ${addBtn}
+        <button class="btn-add" id="add-${p.id}" ${isOutOfStock ? 'disabled' : ''} onclick="cart.addItem(${itemJson})">${isOutOfStock ? 'Out of Stock' : 'Add'}</button>
       </div>
     </div>
   </div>`;
@@ -881,6 +938,17 @@ class ShoppingCart {
   addItem(item) {
     const id       = String(item.id); /*  use string for comparison */
     const existing = this.items.find(i => i.id === id);
+    const stockVal = Number(item.stock);
+    const hasStockInfo = item.stock !== undefined && item.stock !== null && !Number.isNaN(stockVal);
+
+    if (hasStockInfo && stockVal <= 0) {
+      this.showNotification(`${item.name} is out of stock`);
+      return;
+    }
+    if (hasStockInfo && existing && existing.quantity >= stockVal) {
+      this.showNotification(`No more stock for ${item.name}`);
+      return;
+    }
 
     if (existing) {
       existing.quantity += 1;          /* Increment existing item */
@@ -968,7 +1036,7 @@ class ShoppingCart {
         <div class="cart-empty">
           <div class="cart-empty-icon">🛒</div>
           <p style="font-weight:700;margin-bottom:4px">Nothing here yet</p>
-          <p style="font-size:12px">Add memberships or gear to get started</p>
+          <p style="font-size:12px">Add products to get started</p>
         </div>`;
     } else {
       /* Render each cart item row */
@@ -1161,7 +1229,7 @@ function renderCardForm() {
   const prefillName = defaultCard?.cardHolder || currentUser?.name || '';
 
   const savedSection = savedCards.length > 0 ? `
-    <div style="margin-bottom:14px;padding:12px 14px;border-radius:10px;border:1px solid rgba(8,165,226,0.3);background:rgba(8,165,226,0.06)">
+    <div style="margin-bottom:14px;padding:12px 14px;border-radius:10px;border:1px solid var(--accent2);background:var(--accent-bg)">
       <div style="font-size:0.8rem;opacity:0.65;margin-bottom:8px">Saved cards</div>
       <div style="display:flex;flex-direction:column;gap:6px" id="savedCardsRadios">
         ${savedCards.map(c => `
@@ -1395,7 +1463,7 @@ function submitPayment() {
         const newOrder = { ...txn, date: new Date().toISOString().split('T')[0], status: 'paid',
           items: itemsData.map(i => `${i.name} × ${i.qty}`).join(', '), itemsData };
         ORDER_HISTORY.unshift(newOrder);
-        if (currentUser) sessionStorage.setItem('xgym_pending_orders', JSON.stringify(ORDER_HISTORY.slice(0, 30)));
+        if (currentUser) sessionStorage.setItem(_ORDER_HISTORY_KEY, JSON.stringify(ORDER_HISTORY.slice(0, 30)));
       } catch(e) {}
       cart.clearCart();
       renderCheckoutBody('success', txn);
@@ -1443,7 +1511,7 @@ function submitPayment() {
         const newOrder = { ...txn, date: new Date().toISOString().split('T')[0], status: 'paid',
           items: itemsData.map(i => `${i.name} × ${i.qty}`).join(', '), itemsData };
         ORDER_HISTORY.unshift(newOrder);
-        if (currentUser) sessionStorage.setItem('xgym_pending_orders', JSON.stringify(ORDER_HISTORY.slice(0, 30)));
+        if (currentUser) sessionStorage.setItem(_ORDER_HISTORY_KEY, JSON.stringify(ORDER_HISTORY.slice(0, 30)));
       } catch(e) {}
       cart.clearCart();
       renderCheckoutBody('success', txn);
@@ -1455,22 +1523,54 @@ function submitPayment() {
    Calculates summary stats and renders the full order list.
    In production: replace ORDER_HISTORY with a fetch() from the orders API.
    */
-function openHistory() {
-  const totalPaid = ORDER_HISTORY
+async function openHistory() {
+  openModal('historyModal');
+  document.getElementById('historyBody').innerHTML = '<div style="text-align:center;padding:2rem;opacity:0.6">Loading orders\u2026</div>';
+
+  let orders = [...ORDER_HISTORY];
+
+  if (currentUser && currentUser.uid && typeof db !== 'undefined' && db) {
+    try {
+      const snap = await db.ref('store_purchases/' + currentUser.uid).once('value');
+      if (snap.exists()) {
+        snap.forEach(child => {
+          const o = child.val();
+          const orderId = o.orderId || child.key;
+          if (orders.some(e => e.id === orderId)) return;
+          const itemsLabel = Array.isArray(o.items)
+            ? o.items.map(i => typeof i === 'string' ? i : `${i.name || ''} \xd7 ${i.qty || 1}`).join(', ')
+            : (o.summary || (typeof o.items === 'string' ? o.items : '') || '');
+          orders.push({
+            id: orderId,
+            date: o.date || (o.createdAt ? new Date(o.createdAt).toISOString().split('T')[0] : ''),
+            amount: parseFloat(o.total || o.amount) || 0,
+            method: o.method || o.paymentMethod || 'card',
+            status: o.status || 'paid',
+            items: itemsLabel
+          });
+        });
+      }
+    } catch(e) {}
+  }
+
+  if (!orders.length) orders = currentUser ? [] : _DEMO_ORDER_HISTORY;
+  orders.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+
+  const totalPaid = orders
     .filter(o => o.status === 'paid')
     .reduce((s, o) => s + parseFloat(o.amount), 0);
-  const failedCount = ORDER_HISTORY.filter(o => o.status === 'failed').length;
+  const failedCount = orders.filter(o => o.status === 'failed').length;
 
   document.getElementById('historyBody').innerHTML = `
     <!-- Summary stats row -->
     <div class="history-stats">
       <div class="hstat">
         <div class="hstat-label">Total spent</div>
-        <div class="hstat-val">£${totalPaid.toFixed(2)}</div>
+        <div class="hstat-val">\xa3${totalPaid.toFixed(2)}</div>
       </div>
       <div class="hstat">
         <div class="hstat-label">Orders</div>
-        <div class="hstat-val">${ORDER_HISTORY.filter(o => o.status === 'paid').length}</div>
+        <div class="hstat-val">${orders.filter(o => o.status === 'paid').length}</div>
       </div>
       <div class="hstat">
         <div class="hstat-label">Failed</div>
@@ -1480,24 +1580,23 @@ function openHistory() {
 
     <!-- Order list -->
     <div class="history-list">
-      ${ORDER_HISTORY.map(o => `
+      ${orders.length ? orders.map(o => `
         <div class="history-item">
           <div class="h-left">
             <div class="h-desc">${o.items}</div>
             <div class="h-meta">
               ${new Date(o.date).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})}
-              &nbsp;·&nbsp; ${o.method}
+              &nbsp;\xb7&nbsp; ${o.method}
             </div>
           </div>
           <div class="h-right">
-            <div class="h-amount">£${parseFloat(o.amount).toFixed(2)}</div>
+            <div class="h-amount">\xa3${parseFloat(o.amount).toFixed(2)}</div>
             <span class="badge badge-${o.status}">${o.status}</span>
           </div>
         </div>
-      `).join('')}
+      `).join('') : '<p style="opacity:0.55;text-align:center;padding:1.5rem 0">No orders yet.</p>'}
     </div>
   `;
-  openModal('historyModal');
 }
 
 /*  MODAL HELPERS

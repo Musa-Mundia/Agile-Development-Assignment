@@ -1266,15 +1266,128 @@ async function createMealPlan(trainerId, clientId, plan) {
 // SECTION 6B: CLASS BOOKING — DATA FUNCTIONS
 // ============================================================
 
+// Firebase RTDB path that stores append-only class mutation events.
+const XGYM_CLASS_EVENTS_KEY = "class_events";
+
+function _sortClassesForUi(classes) {
+  const DAYS = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
+  return (classes || []).slice().sort((a, b) => {
+    const di = DAYS.indexOf(a.day) - DAYS.indexOf(b.day);
+    return di !== 0 ? di : (a.time || "").localeCompare(b.time || "");
+  });
+}
+
+/**
+ * Append a single class mutation event to Firebase RTDB.
+ * eventType: "create" | "update" | "delete"
+ * classId:   the class's stable ID (same one stored under classes/{classId})
+ * payload:   the full class data (create), the changed fields (update), or {} (delete)
+ */
+async function _appendClassEvent(eventType, classId, payload) {
+  const evtRef = db.ref(XGYM_CLASS_EVENTS_KEY).push();
+  await evtRef.set({
+    eventType,
+    classId,
+    payload: payload || {},
+    createdAt: Date.now()
+  });
+  return evtRef.key;
+}
+
+/**
+ * Read all class_events from Firebase and replay them in chronological order
+ * to produce the current projected set of classes.
+ * Returns [] when the log is empty (caller should fall back to legacy classes/ node).
+ */
+async function _getClassesFromEventLog() {
+  const snap = await db.ref(XGYM_CLASS_EVENTS_KEY).orderByChild("createdAt").once("value");
+  if (!snap.exists()) return [];
+
+  const byId = new Map();
+  snap.forEach(child => {
+    const e = child.val() || {};
+    const cid = String(e.classId || "");
+    if (!cid) return;
+    const p = e.payload || {};
+    if (e.eventType === "create") {
+      byId.set(cid, { id: cid, ...p });
+    } else if (e.eventType === "update") {
+      const cur = byId.get(cid) || { id: cid };
+      byId.set(cid, { ...cur, ...p, id: cid });
+    } else if (e.eventType === "delete") {
+      byId.delete(cid);
+    }
+  });
+
+  return _sortClassesForUi([...byId.values()]);
+}
+
+function _timeToMinutes(hhmm) {
+  if (!hhmm || !String(hhmm).includes(":")) return null;
+  const [h, m] = String(hhmm).split(":").map(Number);
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return null;
+  return (h * 60) + m;
+}
+
+function _rangesOverlap(startA, endA, startB, endB) {
+  return startA < endB && startB < endA;
+}
+
+async function _assertTrainerClassSchedulable({ trainerId, day, time, duration, ignoreClassId }) {
+  const dur = Math.max(15, Number(duration) || 60);
+  const classStart = _timeToMinutes(time);
+  if (!trainerId) throw new Error("Select a trainer.");
+  if (!day) throw new Error("Select a day.");
+  if (classStart == null) throw new Error("Select a valid class time.");
+  const classEnd = classStart + dur;
+
+  const wh = await getTrainerWorkingHours(trainerId).catch(() => ({ hours: {}, approved: false, name: "" }));
+  const whEntry = (wh && wh.hours && wh.hours[day]) ? wh.hours[day] : null;
+  if (!whEntry || !whEntry.active) {
+    throw new Error(`Trainer is not available on ${day}.`);
+  }
+  const whStart = _timeToMinutes(whEntry.start);
+  const whEnd = _timeToMinutes(whEntry.end);
+  if (whStart == null || whEnd == null || whEnd <= whStart) {
+    throw new Error("Trainer working hours are invalid. Ask trainer/admin to update working hours.");
+  }
+  if (classStart < whStart || classEnd > whEnd) {
+    throw new Error(`Class time ${time} (${dur} min) is outside trainer working hours (${whEntry.start}-${whEntry.end}) on ${day}.`);
+  }
+
+  const trainerClasses = await getTrainerClasses(trainerId).catch(() => []);
+  for (const c of trainerClasses) {
+    if (!c || c.id === ignoreClassId) continue;
+    if (String(c.day || "") !== String(day || "")) continue;
+    const s2 = _timeToMinutes(c.time);
+    if (s2 == null) continue;
+    const e2 = s2 + Math.max(15, Number(c.duration) || 60);
+    if (_rangesOverlap(classStart, classEnd, s2, e2)) {
+      throw new Error(`Trainer already has "${c.name || "a class"}" from ${c.time} to ${String(Math.floor(e2 / 60)).padStart(2, "0")}:${String(e2 % 60).padStart(2, "0")} on ${day}.`);
+    }
+  }
+}
+
 /**
  * Create a gym class.
+ * Appends a "create" event to class_events in Firebase, then writes the legacy
+ * classes/{id} node so participant/booking subtrees still work.
  */
 async function createClass(trainerId, trainerName, data) {
-  // source: "admin" = global (all clients see it)
-  //         "trainer" = linked clients only (clients who hired this trainer)
   const isPublic = data.isPublic !== false;
-  const ref = db.ref("classes").push();
-  await ref.set({
+  await _assertTrainerClassSchedulable({
+    trainerId,
+    day: data.day,
+    time: data.time,
+    duration: Number(data.duration) || 60,
+    ignoreClassId: null
+  });
+
+  // Allocate a stable push key from Firebase.
+  const key = db.ref("classes").push().key;
+  if (!key) throw new Error("Could not allocate a class ID. Please try again.");
+
+  const payload = {
     trainerId,
     trainerName,
     name: data.name,
@@ -1288,14 +1401,26 @@ async function createClass(trainerId, trainerName, data) {
     isPublic,
     source: isPublic ? "admin" : "trainer",
     createdAt: Date.now()
-  });
-  return ref.key;
+  };
+
+  // Event log is the source of truth; legacy node keeps participant subtree intact.
+  await _appendClassEvent("create", key, payload);
+  await db.ref("classes/" + key).set(payload);
+  return key;
 }
 
 /**
  * Fetch all gym classes.
+ * Primary source: class_events projection (Firebase event log).
+ * Fallback: legacy classes/ node (for data that predates the event log).
  */
 async function getClasses() {
+  try {
+    const projected = await _getClassesFromEventLog();
+    if (projected.length) return projected;
+  } catch (_) {}
+
+  // Fallback — legacy classes node (migration safety for pre-event-log data).
   const DAYS = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
   const snap = await db.ref("classes").once("value");
   if (!snap.exists()) return [];
@@ -1309,30 +1434,42 @@ async function getClasses() {
 }
 
 /**
- * Fetch classes owned by a trainer.
+ * Fetch classes owned by a trainer (derived from getClasses — no indexed query needed).
  */
 async function getTrainerClasses(trainerId) {
-  const snap = await db.ref("classes").orderByChild("trainerId").equalTo(trainerId).once("value");
-  if (!snap.exists()) return [];
-  const result = [];
-  snap.forEach(child => result.push({ id: child.key, ...child.val() }));
-  return result;
+  const all = await getClasses().catch(() => []);
+  return (all || []).filter(c => c && c.trainerId === trainerId);
 }
 
 /**
- * Admin updates a class.
+ * Update an existing class.
+ * Appends an "update" event, then patches the legacy node for consistency.
  */
 async function updateClass(classId, updates) {
+  const classSnap = await db.ref("classes/" + classId).once("value");
+  const current = classSnap.exists() ? classSnap.val() : null;
+  if (!current) throw new Error("Class not found.");
+  const merged = { ...current, ...updates };
+  await _assertTrainerClassSchedulable({
+    trainerId: merged.trainerId,
+    day: merged.day,
+    time: merged.time,
+    duration: Number(merged.duration) || 60,
+    ignoreClassId: classId
+  });
+  await _appendClassEvent("update", classId, updates);
   await db.ref("classes/" + classId).update(updates);
 }
 
 /**
  * Delete a class and all its bookings.
+ * Appends a "delete" event, then removes the legacy node and cleans bookings.
  */
 async function deleteClass(classId) {
+  await _appendClassEvent("delete", classId, {});
   await db.ref("classes/" + classId).remove();
-  const bSnap = await db.ref("bookings").orderByChild("classId").equalTo(classId).once("value");
-  if (bSnap.exists()) {
+  const bSnap = await db.ref("bookings").orderByChild("classId").equalTo(classId).once("value").catch(() => null);
+  if (bSnap && bSnap.exists()) {
     const deletes = {};
     bSnap.forEach(child => { deletes["bookings/" + child.key] = null; });
     await db.ref().update(deletes);
@@ -1666,6 +1803,14 @@ async function deleteMembership(membershipId) {
 
 const DEFAULT_MEMBERSHIP_PLANS = [
   {
+    slug: "starter",
+    name: "Starter",
+    durationDays: 30,
+    price: 29.99,
+    description: "Entry plan for getting started with core gym access.",
+    features: ["Gym floor access", "2 classes / week", "Basic onboarding"]
+  },
+  {
     slug: "core",
     name: "Core",
     durationDays: 30,
@@ -1689,17 +1834,42 @@ const DEFAULT_MEMBERSHIP_PLANS = [
  */
 async function getMembershipPlans() {
   const snap = await db.ref("membership_plans").once("value");
-  if (!snap.exists()) {
-    return DEFAULT_MEMBERSHIP_PLANS.map(p => ({ id: `default-${p.slug}`, ...p, isDefault: true }));
+
+  // Build a map of custom plans from Firebase (keyed by Firebase key)
+  const customPlans = [];
+  if (snap.exists()) {
+    snap.forEach(child => {
+      const data = child.val() || {};
+      customPlans.push({ id: child.key, ...data, isDefault: false });
+    });
   }
 
+  // Always start with all 3 defaults, then let custom plans override or supplement them.
+  // A custom plan "overrides" a default if its name matches the default's slug/name.
   const result = [];
-  snap.forEach(child => {
-    const data = child.val() || {};
-    const nm = String(data.name || "").toLowerCase();
-    if (nm.includes("starter")) return;
-    result.push({ id: child.key, ...data, isDefault: false });
-  });
+  const usedCustomIds = new Set();
+
+  for (const def of DEFAULT_MEMBERSHIP_PLANS) {
+    // Find a matching custom plan (admin-edited version of this default)
+    const override = customPlans.find(cp => {
+      const cpName = String(cp.name || "").toLowerCase();
+      return cpName.includes(def.slug) || cpName === def.name.toLowerCase();
+    });
+    if (override) {
+      result.push(override);
+      usedCustomIds.add(override.id);
+    } else {
+      result.push({ id: `default-${def.slug}`, ...def, isDefault: true });
+    }
+  }
+
+  // Add any extra custom plans that are NOT overriding a default
+  for (const cp of customPlans) {
+    if (!usedCustomIds.has(cp.id)) {
+      result.push(cp);
+    }
+  }
+
   result.sort((a, b) => (a.price || 0) - (b.price || 0));
   return result;
 }
@@ -1767,16 +1937,15 @@ async function getClientStorePurchases(clientId) {
     snap.forEach(child => result.push({ id: child.key, _src: "sp", ...child.val() }));
   }
 
-  // Also read from global transactions — include records tagged with this clientId
-  // OR legacy anonymous records (no clientId) to recover purchases made before this fix.
+  // Also read from global transactions, but only records explicitly tagged for this client.
+  // Never include anonymous records to avoid cross-client history leakage.
   try {
     const txSnap = await db.ref("transactions").once("value");
     if (txSnap.exists()) {
       txSnap.forEach(child => {
         const t = child.val();
         if (t.type !== "store_purchase") return;
-        const belongsToClient = t.clientId === clientId || (!t.clientId);
-        if (!belongsToClient) return;
+        if (t.clientId !== clientId) return;
         // Avoid duplicating entries already present in store_purchases.
         // Deduplicate by matching amount + timestamp within 5 seconds.
         const tTs = Number(t.createdAt) || 0;
@@ -2567,6 +2736,10 @@ async function initClientPage() {
     const greeting = document.getElementById("client-greeting");
     if (greeting) greeting.textContent = `Hello, ${profile.name}`;
 
+    // Update logout button avatar dot with user's real initial
+    const initDot = document.getElementById("client-initial-dot");
+    if (initDot && profile.name) initDot.textContent = profile.name.charAt(0).toUpperCase();
+
     // Panel navigation
     initPanelNav();
     _updateCartBadge();
@@ -3309,8 +3482,8 @@ async function _loadClientMembershipPanel(clientId) {
     // getAllMemberships + filter is used for memberships since it reliably returns all records.
     const [plans, payments, allMembsRaw] = await Promise.all([
       getMembershipPlans(),
-      getClientMembershipPayments(clientId),
-      getAllMemberships()
+      getClientMembershipPayments(clientId).catch(() => []),
+      getAllMemberships().catch(() => [])
     ]);
     const allMembs = allMembsRaw.filter(m => m.clientId === clientId);
     payments.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
@@ -3446,15 +3619,32 @@ async function _loadClientMembershipPanel(clientId) {
     if (cancelMemBtn && activeMem) {
       cancelMemBtn.addEventListener("click", () => {
         if (!canCancel) { showToast("Cancellation window has passed (2 days from activation).", "error"); return; }
+        const memPrice = parseFloat(activeMem.price || activePlanPrice || 0);
+        const CANCEL_FEE = 6;
+        const refundAmount = Math.max(0, memPrice - CANCEL_FEE);
         showModal("Cancel Membership",
-          `<p>Cancel your <strong>${activeMem.type || "membership"}</strong>? This will end your access immediately.</p>`,
+          `<p>Cancel your <strong>${activeMem.type || "membership"}</strong>?</p>
+           <p style="margin-top:8px">A <strong>£${CANCEL_FEE.toFixed(2)} cancellation fee</strong> will be deducted.
+           You will receive a <strong style="color:#00c850">£${refundAmount.toFixed(2)} refund</strong>.</p>
+           <p style="margin-top:8px;opacity:0.65;font-size:0.85rem">Access ends immediately.</p>`,
           async () => {
             try {
               await updateMembership(activeMem.id, {
                 status: "cancelled", cancelledAt: Date.now(),
                 cancelReason: "Cancelled by client within 2-day window", expiresAt: Date.now()
               });
-              showToast("Membership cancelled.", "info");
+              if (refundAmount > 0) {
+                await db.ref("refunds").push({
+                  clientId, membershipId: activeMem.id,
+                  membershipType: activeMem.type || "membership",
+                  amount: refundAmount, fee: CANCEL_FEE,
+                  reason: "cancellation", createdAt: Date.now()
+                });
+              }
+              const msg = refundAmount > 0
+                ? `Membership cancelled. £${refundAmount.toFixed(2)} refund issued (£${CANCEL_FEE.toFixed(2)} cancellation fee applied).`
+                : `Membership cancelled. No refund — cancellation fee of £${CANCEL_FEE.toFixed(2)} exceeds membership price.`;
+              showToast(msg, "success");
               _loadClientMembershipPanel(clientId);
             } catch (err) { showToast(err.message, "error"); }
           }
@@ -3857,9 +4047,9 @@ async function _syncPendingStoreActions(uid) {
 
   // ── 3. Persist store orders into Firebase store_purchases ────
   try {
-    const ordersRaw = sessionStorage.getItem("xgym_pending_orders");
+    const ordersRaw = sessionStorage.getItem("xgym_pending_orders_" + uid);
     if (ordersRaw) {
-      sessionStorage.removeItem("xgym_pending_orders");
+      sessionStorage.removeItem("xgym_pending_orders_" + uid);
       const orders = JSON.parse(ordersRaw);
       for (const o of orders) {
         if (o.status !== "paid") continue;
@@ -4641,8 +4831,7 @@ async function _loadClientBookingPanel(clientId, clientName, opts = {}) {
     } catch(_) { waitlistPositions[c.id] = 0; }
   }));
 
-  // Fetch trainer classes DIRECTLY from Firebase by trainerId — most reliable approach.
-  // This bypasses all ID-matching logic and guarantees we get the trainer's actual classes.
+  // Fetch trainer classes by trainerId, then augment via trainer-name fallback for legacy rows.
   let trainerClasses = [];
   if (linkedTrainerIds.length) {
     const perTrainer = await Promise.all(
@@ -4655,6 +4844,14 @@ async function _loadClientBookingPanel(clientId, clientName, opts = {}) {
           seenIds.add(c.id);
           trainerClasses.push(c);
         }
+      }
+    }
+    // Add classes whose trainerName matches linked trainers (for rows missing trainerId integrity).
+    const byName = classes.filter(c => isLinkedTrainerClass(c));
+    for (const c of byName) {
+      if (c && c.id && !seenIds.has(c.id)) {
+        seenIds.add(c.id);
+        trainerClasses.push(c);
       }
     }
     trainerClasses.sort((a, b) => {
@@ -4688,7 +4885,12 @@ async function _loadClientBookingPanel(clientId, clientName, opts = {}) {
   // Build a set of trainer class IDs so isVisible can use it without ID-matching guesswork
   const trainerClassIds = new Set(trainerClasses.map(c => c.id));
 
-  const visibleClasses = classes.filter(c => {
+  const classesById = new Map();
+  classes.forEach(c => { if (c && c.id) classesById.set(c.id, c); });
+  trainerClasses.forEach(c => { if (c && c.id) classesById.set(c.id, c); });
+  const allCandidateClasses = [...classesById.values()];
+
+  const visibleClasses = allCandidateClasses.filter(c => {
     if (trainerClassIds.has(c.id)) return true;       // linked trainer's class — always show
     if (isLinkedTrainerClass(c)) return true;          // backup: ID/name match
     if (c.isPublic !== false) return true;             // public/admin class (isPublic: true or missing = show)
@@ -5634,18 +5836,26 @@ async function _loadTrainerClassesPanel(trainerUid, trainerName) {
 
   panel.innerHTML = `<div style="text-align:center;padding:40px;opacity:0.5">Loading classes…</div>`;
 
-  // Merge trainer's own classes (ordered query) with admin-created classes assigned to this
-  // trainer (fetched via getClasses, which returns all isPublic:true records).  This guards
-  // against Firebase ordered-query rule evaluation silently dropping records.
+  // Merge trainer's own classes (ID query) with public classes assigned by either trainerId
+  // OR trainerName fallback. This guards legacy rows where trainerName was set but trainerId
+  // was stale/missing.
   let classes;
   try {
     const [trainerOwn, allPublic] = await Promise.all([
       getTrainerClasses(trainerUid).catch(() => []),
       getClasses().catch(() => [])
     ]);
+    const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    const myNameNorm = norm(trainerName);
+    const byAssignedPublic = allPublic.filter(c => c.trainerId === trainerUid);
+    const byNamePublic = allPublic.filter(c => {
+      if (!myNameNorm) return false;
+      const cn = norm(c && c.trainerName);
+      return !!cn && (cn === myNameNorm || cn.includes(myNameNorm) || myNameNorm.includes(cn));
+    });
     const seen = new Set();
     classes = [];
-    for (const c of [...trainerOwn, ...allPublic.filter(c => c.trainerId === trainerUid)]) {
+    for (const c of [...trainerOwn, ...byAssignedPublic, ...byNamePublic]) {
       if (!seen.has(c.id)) { seen.add(c.id); classes.push(c); }
     }
     classes.sort((a, b) => {
@@ -5766,43 +5976,86 @@ async function _loadTrainerClassesPanel(trainerUid, trainerName) {
     </div>
 
     <div id="tc-create-form" style="display:none">
-      <div class="card" style="padding:22px;margin-bottom:24px">
-        <h3 style="margin:0 0 18px;font-size:1rem">Create New Class</h3>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
-          <input id="tc-name" type="text" placeholder="Class Name"
-            style="padding:10px 14px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-            background:rgba(255,255,255,0.05);color:inherit;font-family:inherit">
-          <select id="tc-type"
-            style="padding:10px 14px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-            background:rgba(255,255,255,0.05);color:inherit;font-family:inherit">${typeOpts}</select>
-          <select id="tc-day"
-            style="padding:10px 14px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-            background:rgba(255,255,255,0.05);color:inherit;font-family:inherit">${dayOpts}</select>
-          <input id="tc-time" type="time"
-            style="padding:10px 14px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-            background:rgba(255,255,255,0.05);color:inherit;font-family:inherit">
-          <input id="tc-duration" type="number" min="15" step="15" placeholder="Duration (min)" value="60"
-            style="padding:10px 14px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-            background:rgba(255,255,255,0.05);color:inherit;font-family:inherit">
-          <input id="tc-capacity" type="number" min="1" placeholder="Max Capacity" value="20"
-            style="padding:10px 14px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
-            background:rgba(255,255,255,0.05);color:inherit;font-family:inherit">
+      <div style="border-radius:14px;overflow:hidden;margin-bottom:24px;border:1px solid rgba(255,255,255,0.08);background:rgba(20,16,16,0.45)">
+        <div id="tc-form-header" style="padding:18px 22px;display:flex;align-items:center;gap:14px;background:linear-gradient(135deg,rgba(8,135,226,0.14),rgba(0,106,245,0.07));border-bottom:1px solid rgba(8,135,226,0.22);transition:background 0.35s,border-color 0.35s">
+          <div id="tc-form-icon" style="width:40px;height:40px;border-radius:10px;background:linear-gradient(135deg,#0887e2,#006af5);display:flex;align-items:center;justify-content:center;font-size:1.2rem;flex-shrink:0;box-shadow:0 0 16px rgba(8,135,226,0.4);transition:background 0.35s,box-shadow 0.35s">🏋️</div>
+          <div>
+            <div style="font-size:1rem;font-weight:700">Create New Class</div>
+            <div id="tc-form-subtitle" style="font-size:0.74rem;opacity:0.48;margin-top:2px">Fill in the details below to schedule your class</div>
+          </div>
         </div>
-        <input id="tc-location" type="text" placeholder="Location / Room (optional)"
-          style="width:100%;box-sizing:border-box;padding:10px 14px;border-radius:8px;
-          border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);
-          color:inherit;font-family:inherit;margin-bottom:12px">
-        <textarea id="tc-desc" rows="2" placeholder="Description (optional)"
-          style="width:100%;box-sizing:border-box;padding:10px 14px;border-radius:8px;
-          border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);
-          color:inherit;font-family:inherit;resize:vertical;margin-bottom:8px"></textarea>
-        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:0.88rem;margin-bottom:14px">
-          <input type="checkbox" id="tc-public" checked style="width:16px;height:16px;accent-color:#0887e2">
-          Open to all gym members (uncheck = your linked clients only)
-        </label>
-        <button id="tc-create-btn" style="padding:10px 28px;border:none;border-radius:8px;
-          background:linear-gradient(90deg,#0887e2,#006af5);color:#fff;cursor:pointer;
-          font-family:inherit;font-weight:600;font-size:0.9rem">+ Create Class</button>
+        <div style="display:grid;grid-template-columns:1fr 290px">
+          <div style="padding:20px 22px;border-right:1px solid rgba(255,255,255,0.06)">
+            <div style="font-size:0.62rem;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;opacity:0.38;margin-bottom:9px">Class Identity</div>
+            <div style="margin-bottom:14px">
+              <label style="font-size:0.73rem;opacity:0.5;display:block;margin-bottom:5px">Class Name</label>
+              <input id="tc-name" type="text" placeholder="e.g. Morning HIIT Blast" style="width:100%;box-sizing:border-box;padding:10px 14px;border-radius:9px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.05);color:inherit;font-family:inherit;font-size:0.9rem">
+            </div>
+            <div style="margin-bottom:20px">
+              <label style="font-size:0.73rem;opacity:0.5;display:block;margin-bottom:6px">Category</label>
+              <div id="tc-type-chips" style="display:flex;flex-wrap:wrap;gap:6px">${CLASS_TYPES.map(t=>`<button type="button" class="tc-type-chip" data-type="${t}" style="padding:5px 13px;border-radius:20px;font-size:0.74rem;font-weight:600;cursor:pointer;border:1px solid rgba(255,255,255,0.13);background:rgba(255,255,255,0.04);color:inherit;font-family:inherit;transition:all 0.18s">${t}</button>`).join("")}</div>
+              <input type="hidden" id="tc-type" value="General">
+            </div>
+            <div style="font-size:0.62rem;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;opacity:0.38;margin-bottom:9px">Schedule</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:20px">
+              <div>
+                <label style="font-size:0.73rem;opacity:0.5;display:block;margin-bottom:5px">Day</label>
+                <select id="tc-day" class="tc-theme-select" style="width:100%;padding:10px 14px;border-radius:9px;border:1px solid rgba(255,255,255,0.12);background:#1e1818;color:#f0ece4;font-family:inherit;font-size:0.9rem">${dayOpts}</select>
+              </div>
+              <div>
+                <label style="font-size:0.73rem;opacity:0.5;display:block;margin-bottom:5px">Time</label>
+                <input id="tc-time" type="time" style="width:100%;box-sizing:border-box;padding:10px 14px;border-radius:9px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.05);color:inherit;font-family:inherit;font-size:0.9rem">
+              </div>
+              <div>
+                <label style="font-size:0.73rem;opacity:0.5;display:block;margin-bottom:5px">Duration (min)</label>
+                <input id="tc-duration" type="number" min="15" step="15" value="60" style="width:100%;box-sizing:border-box;padding:10px 14px;border-radius:9px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.05);color:inherit;font-family:inherit;font-size:0.9rem">
+              </div>
+            </div>
+            <div style="font-size:0.62rem;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;opacity:0.38;margin-bottom:9px">Details</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
+              <div>
+                <label style="font-size:0.73rem;opacity:0.5;display:block;margin-bottom:5px">Max Capacity</label>
+                <input id="tc-capacity" type="number" min="1" value="20" style="width:100%;box-sizing:border-box;padding:10px 14px;border-radius:9px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.05);color:inherit;font-family:inherit;font-size:0.9rem">
+              </div>
+              <div>
+                <label style="font-size:0.73rem;opacity:0.5;display:block;margin-bottom:5px">Location / Room</label>
+                <input id="tc-location" type="text" placeholder="e.g. Studio B" style="width:100%;box-sizing:border-box;padding:10px 14px;border-radius:9px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.05);color:inherit;font-family:inherit;font-size:0.9rem">
+              </div>
+            </div>
+            <div style="margin-bottom:14px">
+              <label style="font-size:0.73rem;opacity:0.5;display:block;margin-bottom:5px">Description (optional)</label>
+              <textarea id="tc-desc" rows="2" placeholder="What will clients experience in this class?" style="width:100%;box-sizing:border-box;padding:10px 14px;border-radius:9px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.05);color:inherit;font-family:inherit;font-size:0.9rem;resize:vertical"></textarea>
+            </div>
+            <label style="display:flex;align-items:center;gap:9px;cursor:pointer;font-size:0.86rem;margin-bottom:18px">
+              <input type="checkbox" id="tc-public" checked style="width:16px;height:16px;accent-color:#0887e2">
+              <span>Open to all gym members <span style="opacity:0.45;font-size:0.78rem">(uncheck = your linked clients only)</span></span>
+            </label>
+            <button id="tc-create-btn" style="padding:12px 30px;border:none;border-radius:10px;background:linear-gradient(90deg,#0887e2,#006af5);color:#fff;cursor:pointer;font-family:inherit;font-weight:700;font-size:0.92rem;letter-spacing:0.04em;box-shadow:0 4px 18px rgba(8,135,226,0.35)">＋ Schedule Class</button>
+          </div>
+          <div style="padding:20px 18px">
+            <div style="font-size:0.62rem;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;opacity:0.38;margin-bottom:12px">Live Preview</div>
+            <div id="tc-preview-card" style="border-radius:12px;border:1px solid rgba(255,255,255,0.1);background:rgba(255,255,255,0.03);overflow:hidden">
+              <div id="tc-preview-stripe" style="height:4px;background:#00c853;transition:background 0.3s"></div>
+              <div style="padding:14px 16px">
+                <div id="tc-preview-name" style="font-size:0.95rem;font-weight:700;margin-bottom:5px">New Class</div>
+                <span id="tc-preview-badge" style="display:inline-block;padding:2px 9px;border-radius:12px;font-size:0.68rem;font-weight:600;background:rgba(0,200,80,0.12);color:#00c853;margin-bottom:12px;transition:all 0.3s">General</span>
+                <div style="font-size:0.8rem;opacity:0.58;display:flex;flex-direction:column;gap:6px">
+                  <div>📅 <span id="tc-preview-day">Monday</span> &nbsp;·&nbsp; 🕐 <span id="tc-preview-time">--:--</span></div>
+                  <div>⏱ <span id="tc-preview-dur">60</span> min &nbsp;·&nbsp; 👥 <span id="tc-preview-cap">20</span> spots</div>
+                  <div id="tc-preview-loc-row" style="display:none">📍 <span id="tc-preview-loc-val"></span></div>
+                </div>
+              </div>
+            </div>
+            <div style="margin-top:14px;padding:12px 14px;border-radius:10px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06)">
+              <div style="font-size:0.67rem;opacity:0.4;margin-bottom:6px;font-weight:600;text-transform:uppercase;letter-spacing:0.1em">Tips</div>
+              <ul style="margin:0;padding-left:16px;font-size:0.75rem;opacity:0.44;display:flex;flex-direction:column;gap:4px">
+                <li>Pick a name clients will recognise</li>
+                <li>Set realistic capacity for your venue</li>
+                <li>Public classes appear in client booking</li>
+              </ul>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -5814,6 +6067,55 @@ async function _loadTrainerClassesPanel(trainerUid, trainerName) {
     const open = form.style.display === "none";
     form.style.display = open ? "block" : "none";
     btn.textContent = open ? "✕ Close" : "+ New Class";
+  });
+
+  // ── Type chip selector + live preview wiring ──
+  const _tcChips = document.querySelectorAll('#tc-type-chips .tc-type-chip');
+  function _tcSelectType(type) {
+    const col = TYPE_COLORS[type] || '#00c853';
+    const hid = document.getElementById('tc-type');
+    if (hid) hid.value = type;
+    _tcChips.forEach(ch => {
+      const on = ch.dataset.type === type;
+      ch.style.background  = on ? col + '22' : 'rgba(255,255,255,0.04)';
+      ch.style.color       = on ? col : 'inherit';
+      ch.style.borderColor = on ? col : 'rgba(255,255,255,0.13)';
+    });
+    const stripe = document.getElementById('tc-preview-stripe');
+    const badge  = document.getElementById('tc-preview-badge');
+    const hdr    = document.getElementById('tc-form-header');
+    const icon   = document.getElementById('tc-form-icon');
+    if (stripe) stripe.style.background = col;
+    if (badge)  { badge.style.background = col + '22'; badge.style.color = col; badge.textContent = type; }
+    if (hdr)    { hdr.style.background = `linear-gradient(135deg,${col}14,${col}07)`; hdr.style.borderBottomColor = col + '30'; }
+    if (icon)   { icon.style.background = `linear-gradient(135deg,${col},${col}bb)`; icon.style.boxShadow = `0 0 16px ${col}55`; }
+  }
+  _tcSelectType('General');
+  _tcChips.forEach(ch => ch.addEventListener('click', () => _tcSelectType(ch.dataset.type)));
+  function _tcUpdatePreview() {
+    const n   = (document.getElementById('tc-name')?.value    || '').trim() || 'New Class';
+    const day = document.getElementById('tc-day')?.value       || 'Monday';
+    const t   = document.getElementById('tc-time')?.value      || '--:--';
+    const dur = document.getElementById('tc-duration')?.value  || '60';
+    const cap = document.getElementById('tc-capacity')?.value  || '20';
+    const loc = (document.getElementById('tc-location')?.value || '').trim();
+    const safe = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+    safe('tc-preview-name', n);
+    safe('tc-preview-day',  day);
+    safe('tc-preview-time', t);
+    safe('tc-preview-dur',  dur);
+    safe('tc-preview-cap',  cap);
+    const locRow = document.getElementById('tc-preview-loc-row');
+    const locVal = document.getElementById('tc-preview-loc-val');
+    if (locRow && locVal) { locRow.style.display = loc ? '' : 'none'; locVal.textContent = loc; }
+    const sub = document.getElementById('tc-form-subtitle');
+    if (sub) sub.textContent = n !== 'New Class' ? `${n} · ${day} at ${t}` : 'Fill in the details below to schedule your class';
+  }
+  ['tc-name','tc-day','tc-time','tc-duration','tc-capacity','tc-location'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('input', _tcUpdatePreview);
+    el.addEventListener('change', _tcUpdatePreview);
   });
 
   document.getElementById("tc-create-btn").addEventListener("click", async () => {
@@ -8523,19 +8825,22 @@ async function _loadAdminMembershipsPanel() {
     function renderPlanList() {
       const list = document.getElementById("plan-list");
       list.innerHTML = plans.map(p => {
-        const canModify = !String(p.id).startsWith("default-");
+        const isDefault = p.isDefault || String(p.id).startsWith("default-");
+        const canDelete = !isDefault;
         return `
           <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.08)">
             <div>
               <strong>${p.name}</strong>
+              ${isDefault ? `<span style="margin-left:6px;font-size:0.72rem;padding:2px 7px;border-radius:10px;background:rgba(8,135,226,0.18);color:#0887e2;font-weight:600">DEFAULT</span>` : ""}
               <span style="opacity:0.65"> · ${money(p.price)} · ${p.durationDays || 30} days</span>
               <div style="opacity:0.58;font-size:0.83rem">${p.description || ""}</div>
             </div>
             <div style="display:flex;gap:8px">
-              <button class="plan-edit-btn" data-id="${p.id}" ${canModify ? "" : "disabled"}
-                style="padding:6px 12px;border:none;border-radius:7px;background:rgba(255,255,255,0.12);color:#fff;cursor:${canModify ? "pointer" : "not-allowed"}">Edit</button>
-              <button class="plan-del-btn" data-id="${p.id}" ${canModify ? "" : "disabled"}
-                style="padding:6px 12px;border:none;border-radius:7px;background:rgba(255,0,60,0.45);color:#fff;cursor:${canModify ? "pointer" : "not-allowed"}">Delete</button>
+              <button class="plan-edit-btn" data-id="${p.id}"
+                style="padding:6px 12px;border:none;border-radius:7px;background:rgba(255,255,255,0.12);color:#fff;cursor:pointer">Edit</button>
+              <button class="plan-del-btn" data-id="${p.id}" ${canDelete ? "" : "disabled"}
+                title="${isDefault ? "Default plans cannot be deleted" : ""}"
+                style="padding:6px 12px;border:none;border-radius:7px;background:rgba(255,0,60,0.45);color:#fff;cursor:${canDelete ? "pointer" : "not-allowed"};opacity:${canDelete ? 1 : 0.4}">Delete</button>
             </div>
           </div>
         `;
@@ -8554,12 +8859,26 @@ async function _loadAdminMembershipsPanel() {
             </div>
           `, async () => {
             try {
-              await updateMembershipPlan(p.id, {
-                name: (document.getElementById("plan-edit-name").value || "").trim() || p.name,
-                price: Number(document.getElementById("plan-edit-price").value) || 0,
-                durationDays: Math.max(1, parseInt(document.getElementById("plan-edit-days").value, 10) || 30),
-                description: (document.getElementById("plan-edit-desc").value || "").trim()
-              });
+              const isDefault = p.isDefault || String(p.id).startsWith("default-");
+              if (isDefault) {
+                // Save default plan override to Firebase using set() so it persists
+                await db.ref("membership_plans/" + p.id).set({
+                  name: (document.getElementById("plan-edit-name").value || "").trim() || p.name,
+                  price: Number(document.getElementById("plan-edit-price").value) || 0,
+                  durationDays: Math.max(1, parseInt(document.getElementById("plan-edit-days").value, 10) || 30),
+                  description: (document.getElementById("plan-edit-desc").value || "").trim(),
+                  features: p.features || [],
+                  slug: p.slug || "",
+                  updatedAt: Date.now()
+                });
+              } else {
+                await updateMembershipPlan(p.id, {
+                  name: (document.getElementById("plan-edit-name").value || "").trim() || p.name,
+                  price: Number(document.getElementById("plan-edit-price").value) || 0,
+                  durationDays: Math.max(1, parseInt(document.getElementById("plan-edit-days").value, 10) || 30),
+                  description: (document.getElementById("plan-edit-desc").value || "").trim()
+                });
+              }
               showToast("Plan updated.", "success");
               _loadAdminMembershipsPanel();
             } catch (e) { showToast(e.message, "error"); }
@@ -10092,31 +10411,88 @@ async function _loadAdminClassesPanel() {
         <strong style="font-size:0.92rem">+ New Class</strong>
         <span id="ac-form-arrow" style="opacity:0.5;transition:transform 0.2s">▼</span>
       </div>
-      <div id="ac-form-body" style="display:none;padding:20px">
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px">
-          <input id="ac-name" type="text" placeholder="Class Name" style="${inputStyle}">
-          <select id="ac-type" style="${inputStyle}"><option value="">— Type —</option>${typeOpts}</select>
-          <select id="ac-trainer" style="${inputStyle}"><option value="">— Trainer —</option>${trainerOpts}</select>
+      <div id="ac-form-body" style="display:none">
+        <div id="ac-form-header-inner" style="padding:16px 22px;display:flex;align-items:center;gap:14px;background:linear-gradient(135deg,rgba(8,135,226,0.14),rgba(0,106,245,0.07));border-bottom:1px solid rgba(8,135,226,0.22);transition:background 0.35s,border-color 0.35s">
+          <div id="ac-form-icon" style="width:38px;height:38px;border-radius:10px;background:linear-gradient(135deg,#0887e2,#006af5);display:flex;align-items:center;justify-content:center;font-size:1.1rem;flex-shrink:0;box-shadow:0 0 14px rgba(8,135,226,0.4);transition:background 0.35s,box-shadow 0.35s">📋</div>
+          <div>
+            <div style="font-size:0.95rem;font-weight:700">Schedule New Class</div>
+            <div id="ac-form-subtitle" style="font-size:0.73rem;opacity:0.48;margin-top:2px">Fill in the details to add a class to the schedule</div>
+          </div>
         </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px;margin-bottom:6px">
-          <select id="ac-day" style="${inputStyle}">${dayOpts}</select>
-          <input id="ac-time" type="time" style="${inputStyle}">
-          <input id="ac-duration" type="number" min="15" max="180" placeholder="Duration (min)" value="60" style="${inputStyle}">
-          <input id="ac-capacity" type="number" min="1" placeholder="Capacity" value="20" style="${inputStyle}">
+        <div style="display:grid;grid-template-columns:1fr 280px">
+          <div style="padding:18px 22px;border-right:1px solid rgba(255,255,255,0.06)">
+            <div style="font-size:0.62rem;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;opacity:0.38;margin-bottom:9px">Class Identity</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
+              <div>
+                <label style="font-size:0.73rem;opacity:0.5;display:block;margin-bottom:5px">Class Name</label>
+                <input id="ac-name" type="text" placeholder="e.g. Power Yoga" style="width:100%;box-sizing:border-box;padding:10px 14px;border-radius:9px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.05);color:inherit;font-family:inherit;font-size:0.88rem">
+              </div>
+              <div>
+                <label style="font-size:0.73rem;opacity:0.5;display:block;margin-bottom:5px">Assigned Trainer</label>
+                <select id="ac-trainer" style="width:100%;padding:10px 14px;border-radius:9px;border:1px solid rgba(255,255,255,0.12);background:#1e1818;color:#f0ece4;font-family:inherit;font-size:0.88rem"><option value="">— Select Trainer —</option>${trainerOpts}</select>
+              </div>
+            </div>
+            <div style="margin-bottom:20px">
+              <label style="font-size:0.73rem;opacity:0.5;display:block;margin-bottom:6px">Category</label>
+              <div id="ac-type-chips" style="display:flex;flex-wrap:wrap;gap:6px">${CLASS_TYPES.map(t=>`<button type="button" class="ac-type-chip" data-type="${t}" style="padding:5px 13px;border-radius:20px;font-size:0.74rem;font-weight:600;cursor:pointer;border:1px solid rgba(255,255,255,0.13);background:rgba(255,255,255,0.04);color:inherit;font-family:inherit;transition:all 0.18s">${t}</button>`).join("")}</div>
+              <input type="hidden" id="ac-type" value="General">
+            </div>
+            <div style="font-size:0.62rem;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;opacity:0.38;margin-bottom:9px">Schedule</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px;margin-bottom:8px">
+              <div>
+                <label style="font-size:0.73rem;opacity:0.5;display:block;margin-bottom:5px">Day</label>
+                <select id="ac-day" style="width:100%;padding:10px 14px;border-radius:9px;border:1px solid rgba(255,255,255,0.12);background:#1e1818;color:#f0ece4;font-family:inherit;font-size:0.88rem">${dayOpts}</select>
+              </div>
+              <div>
+                <label style="font-size:0.73rem;opacity:0.5;display:block;margin-bottom:5px">Time</label>
+                <input id="ac-time" type="time" style="width:100%;box-sizing:border-box;padding:10px 14px;border-radius:9px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.05);color:inherit;font-family:inherit;font-size:0.88rem">
+              </div>
+              <div>
+                <label style="font-size:0.73rem;opacity:0.5;display:block;margin-bottom:5px">Duration (min)</label>
+                <input id="ac-duration" type="number" min="15" max="180" value="60" style="width:100%;box-sizing:border-box;padding:10px 14px;border-radius:9px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.05);color:inherit;font-family:inherit;font-size:0.88rem">
+              </div>
+              <div>
+                <label style="font-size:0.73rem;opacity:0.5;display:block;margin-bottom:5px">Capacity</label>
+                <input id="ac-capacity" type="number" min="1" value="20" style="width:100%;box-sizing:border-box;padding:10px 14px;border-radius:9px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.05);color:inherit;font-family:inherit;font-size:0.88rem">
+              </div>
+            </div>
+            <div id="ac-wh-hint" style="font-size:0.77rem;min-height:18px;margin-bottom:10px;padding-left:2px"></div>
+            <div style="font-size:0.62rem;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;opacity:0.38;margin-bottom:9px">Details</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
+              <div>
+                <label style="font-size:0.73rem;opacity:0.5;display:block;margin-bottom:5px">Location / Room</label>
+                <input id="ac-location" type="text" placeholder="e.g. Studio A" style="width:100%;box-sizing:border-box;padding:10px 14px;border-radius:9px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.05);color:inherit;font-family:inherit;font-size:0.88rem">
+              </div>
+              <div style="display:flex;align-items:flex-end;padding-bottom:2px">
+                <label style="display:flex;align-items:center;gap:9px;cursor:pointer;font-size:0.86rem">
+                  <input id="ac-ispublic" type="checkbox" checked style="width:16px;height:16px;cursor:pointer;accent-color:#0887e2">
+                  <span>Public class <span style="opacity:0.45;font-size:0.78rem">(visible to all clients)</span></span>
+                </label>
+              </div>
+            </div>
+            <div style="margin-bottom:16px">
+              <label style="font-size:0.73rem;opacity:0.5;display:block;margin-bottom:5px">Description (optional)</label>
+              <textarea id="ac-description" rows="2" placeholder="Brief overview of this class…" style="width:100%;box-sizing:border-box;padding:10px 14px;border-radius:9px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.05);color:inherit;font-family:inherit;font-size:0.88rem;resize:vertical"></textarea>
+            </div>
+            <button id="ac-create-btn" style="padding:12px 30px;border:none;border-radius:10px;background:linear-gradient(90deg,#0887e2,#006af5);color:#fff;cursor:pointer;font-family:inherit;font-weight:700;font-size:0.92rem;letter-spacing:0.04em;box-shadow:0 4px 18px rgba(8,135,226,0.35)">＋ Add to Schedule</button>
+          </div>
+          <div style="padding:18px 16px">
+            <div style="font-size:0.62rem;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;opacity:0.38;margin-bottom:12px">Live Preview</div>
+            <div id="ac-preview-card" style="border-radius:12px;border:1px solid rgba(255,255,255,0.1);background:rgba(255,255,255,0.03);overflow:hidden">
+              <div id="ac-preview-stripe" style="height:4px;background:#00c853;transition:background 0.3s"></div>
+              <div style="padding:14px 16px">
+                <div id="ac-preview-name" style="font-size:0.93rem;font-weight:700;margin-bottom:5px">New Class</div>
+                <span id="ac-preview-badge" style="display:inline-block;padding:2px 9px;border-radius:12px;font-size:0.67rem;font-weight:600;background:rgba(0,200,80,0.12);color:#00c853;margin-bottom:12px;transition:all 0.3s">General</span>
+                <div style="font-size:0.79rem;opacity:0.58;display:flex;flex-direction:column;gap:6px">
+                  <div>📅 <span id="ac-preview-day">Monday</span> &nbsp;·&nbsp; 🕐 <span id="ac-preview-time">--:--</span></div>
+                  <div>⏱ <span id="ac-preview-dur">60</span> min &nbsp;·&nbsp; 👥 <span id="ac-preview-cap">20</span> spots</div>
+                  <div id="ac-preview-trainer-row" style="display:none">👤 <span id="ac-preview-trainer"></span></div>
+                  <div id="ac-preview-loc-row" style="display:none">📍 <span id="ac-preview-loc-val"></span></div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
-        <div id="ac-wh-hint" style="font-size:0.78rem;min-height:18px;margin-bottom:8px;padding-left:2px;opacity:0.7"></div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
-          <input id="ac-location" type="text" placeholder="Location (e.g. Studio A)" style="${inputStyle}">
-          <label style="display:flex;align-items:center;gap:10px;font-size:0.88rem;opacity:0.8">
-            <input id="ac-ispublic" type="checkbox" checked style="width:16px;height:16px;cursor:pointer">
-            Public class (visible to all clients)
-          </label>
-        </div>
-        <textarea id="ac-description" rows="2" placeholder="Short description (optional)"
-          style="${inputStyle};width:100%;resize:vertical;box-sizing:border-box;margin-bottom:12px"></textarea>
-        <button id="ac-create-btn" style="padding:10px 28px;border:none;border-radius:8px;
-          background:linear-gradient(90deg,#0887e2,#006af5);color:#fff;cursor:pointer;
-          font-family:inherit;font-weight:600;font-size:0.9rem">+ Create Class</button>
       </div>
     </div>
 
@@ -10139,6 +10515,59 @@ async function _loadAdminClassesPanel() {
     document.getElementById("ac-form-body").style.display = formOpen ? "block" : "none";
     document.getElementById("ac-form-arrow").style.transform = formOpen ? "rotate(180deg)" : "";
   });
+
+    // ── Type chip selector + live preview for Admin Create Class form ──
+    function _acSelectType(type) {
+      const col = TYPE_COLORS[type] || '#00c853';
+      const hid = document.getElementById('ac-type');
+      if (hid) hid.value = type;
+      document.querySelectorAll('#ac-type-chips .ac-type-chip').forEach(ch => {
+        const on = ch.dataset.type === type;
+        ch.style.background  = on ? col + '22' : 'rgba(255,255,255,0.04)';
+        ch.style.color       = on ? col : 'inherit';
+        ch.style.borderColor = on ? col : 'rgba(255,255,255,0.13)';
+      });
+      const stripe = document.getElementById('ac-preview-stripe');
+      const badge  = document.getElementById('ac-preview-badge');
+      const hdr    = document.getElementById('ac-form-header-inner');
+      const icon   = document.getElementById('ac-form-icon');
+      if (stripe) stripe.style.background = col;
+      if (badge)  { badge.style.background = col + '22'; badge.style.color = col; badge.textContent = type; }
+      if (hdr)    { hdr.style.background = `linear-gradient(135deg,${col}14,${col}07)`; hdr.style.borderBottomColor = col + '30'; }
+      if (icon)   { icon.style.background = `linear-gradient(135deg,${col},${col}bb)`; icon.style.boxShadow = `0 0 14px ${col}55`; }
+    }
+    _acSelectType('General');
+    document.querySelectorAll('#ac-type-chips .ac-type-chip').forEach(ch => ch.addEventListener('click', () => _acSelectType(ch.dataset.type)));
+    function _acUpdatePreview() {
+      const n   = (document.getElementById('ac-name')?.value    || '').trim() || 'New Class';
+      const day = document.getElementById('ac-day')?.value       || 'Monday';
+      const t   = document.getElementById('ac-time')?.value      || '--:--';
+      const dur = document.getElementById('ac-duration')?.value  || '60';
+      const cap = document.getElementById('ac-capacity')?.value  || '20';
+      const loc = (document.getElementById('ac-location')?.value || '').trim();
+      const trSel  = document.getElementById('ac-trainer');
+      const trName = trSel?.value ? (trSel.selectedOptions[0]?.dataset.name || trSel.selectedOptions[0]?.textContent?.trim() || '') : '';
+      const safe = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+      safe('ac-preview-name', n);
+      safe('ac-preview-day',  day);
+      safe('ac-preview-time', t);
+      safe('ac-preview-dur',  dur);
+      safe('ac-preview-cap',  cap);
+      const locRow = document.getElementById('ac-preview-loc-row');
+      const locVal = document.getElementById('ac-preview-loc-val');
+      if (locRow && locVal) { locRow.style.display = loc ? '' : 'none'; locVal.textContent = loc; }
+      const trRow = document.getElementById('ac-preview-trainer-row');
+      const trVal = document.getElementById('ac-preview-trainer');
+      if (trRow && trVal) { const show = trName && trName !== '— Select Trainer —'; trRow.style.display = show ? '' : 'none'; trVal.textContent = trName; }
+      const sub = document.getElementById('ac-form-subtitle');
+      if (sub) sub.textContent = n !== 'New Class' ? `${n} · ${day} at ${t}` : 'Fill in the details to add a class to the schedule';
+    }
+    ['ac-name','ac-day','ac-time','ac-duration','ac-capacity','ac-location','ac-trainer'].forEach(id => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.addEventListener('input', _acUpdatePreview);
+      el.addEventListener('change', _acUpdatePreview);
+    });
 
   // Working hours hint helper
   const _whCache = {};
@@ -10277,29 +10706,33 @@ async function _loadAdminClassesPanel() {
           </label>
         </div>`;
         showModal("Edit Class", editHTML, async () => {
-          const trSel = document.getElementById("ac-edit-trainer");
-          const newCap = parseInt(document.getElementById("ac-edit-cap").value) || 20;
-          const currentBooked = counts[id] || 0;
-          if (newCap < currentBooked) {
-            showToast(`Cannot set capacity below current enrollment (${currentBooked} booked).`, "error");
-            return;
+          try {
+            const trSel = document.getElementById("ac-edit-trainer");
+            const newCap = parseInt(document.getElementById("ac-edit-cap").value) || 20;
+            const currentBooked = counts[id] || 0;
+            if (newCap < currentBooked) {
+              showToast(`Cannot set capacity below current enrollment (${currentBooked} booked).`, "error");
+              return;
+            }
+            const editIsPublic = document.getElementById("ac-edit-ispublic").checked;
+            await updateClass(id, {
+              name: document.getElementById("ac-edit-name").value.trim(),
+              type: document.getElementById("ac-edit-type").value,
+              day: document.getElementById("ac-edit-day").value,
+              time: document.getElementById("ac-edit-time").value,
+              duration: parseInt(document.getElementById("ac-edit-duration").value) || 60,
+              trainerId: trSel.value,
+              trainerName: trSel.selectedOptions[0]?.dataset.name || trSel.selectedOptions[0]?.textContent || "",
+              capacity: newCap,
+              location: document.getElementById("ac-edit-location").value.trim(),
+              isPublic: editIsPublic,
+              source: editIsPublic ? "admin" : "trainer"
+            });
+            showToast("Class updated!", "success");
+            _loadAdminClassesPanel();
+          } catch (e) {
+            showToast(e.message || "Could not update class.", "error");
           }
-          const editIsPublic = document.getElementById("ac-edit-ispublic").checked;
-          await updateClass(id, {
-            name: document.getElementById("ac-edit-name").value.trim(),
-            type: document.getElementById("ac-edit-type").value,
-            day: document.getElementById("ac-edit-day").value,
-            time: document.getElementById("ac-edit-time").value,
-            duration: parseInt(document.getElementById("ac-edit-duration").value) || 60,
-            trainerId: trSel.value,
-            trainerName: trSel.selectedOptions[0]?.dataset.name || trSel.selectedOptions[0]?.textContent || "",
-            capacity: newCap,
-            location: document.getElementById("ac-edit-location").value.trim(),
-            isPublic: editIsPublic,
-            source: editIsPublic ? "admin" : "trainer"
-          });
-          showToast("Class updated!", "success");
-          _loadAdminClassesPanel();
         });
         // Wire working hours hint in edit modal after DOM renders
         setTimeout(() => {
@@ -10350,22 +10783,10 @@ async function _loadAdminClassesPanel() {
     if (!time) { showToast("Select a time.", "error"); return; }
     if (!trainerId) { showToast("Select a trainer.", "error"); return; }
     try {
-      const newKey = await createClass(trainerId, trainerName, { name, type, day, time, duration, capacity, location, description, isPublic });
+      await createClass(trainerId, trainerName, { name, type, day, time, duration, capacity, location, description, isPublic });
       showToast("Class created! 🎉", "success");
-      // Optimistic local update — insert new card immediately without full re-fetch
-      const newClass = { id: newKey, trainerId, trainerName, name, day, time, duration, capacity, location, isPublic, type, description, source: isPublic ? "admin" : "trainer", createdAt: Date.now() };
-      classes.push(newClass);
-      classes.sort((a, b) => { const di = DAYS.indexOf(a.day) - DAYS.indexOf(b.day); return di !== 0 ? di : (a.time || "").localeCompare(b.time || ""); });
-      counts[newKey] = 0;
-      if (!activeDays.includes(day)) {
-        activeDays.length = 0;
-        DAYS.filter(d => classes.some(c => c.day === d)).forEach(d => activeDays.push(d));
-      }
-      refresh();
-      // Reset form fields after successful creation
-      document.getElementById("ac-name").value = "";
-      document.getElementById("ac-time").value = "";
-      document.getElementById("ac-description").value = "";
+      // Reload from Firebase so UI state always reflects persisted records exactly.
+      await _loadAdminClassesPanel();
     } catch(e) { showToast(e.message, "error"); }
   });
 }
