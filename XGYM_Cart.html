@@ -717,6 +717,69 @@ footer {
 
 <footer>© 2025 The Gym Birmingham · All rights reserved</footer>
 
+
+
+<div id="auth-overlay" style="
+  display:none; position:fixed; inset:0;
+  background:rgba(0,13,20,0.85); backdrop-filter:blur(12px);
+  z-index:10000; align-items:center; justify-content:center;">
+
+  <div style="
+    background:rgba(0,18,32,0.95); border:1px solid rgba(8,165,226,0.2);
+    border-radius:16px; padding:40px; max-width:420px; width:90%;
+    color:#f1f9fe; font-family:'Exo 2',sans-serif;
+    box-shadow:0 0 60px rgba(8,165,226,0.25);">
+
+    <div id="login-form">
+      <h2 style="margin:0 0 24px;color:#08a5e2;font-size:1.6rem;font-family:'Orbitron',monospace;letter-spacing:0.1em">Login</h2>
+      <input id="login-email" type="email" placeholder="Email"
+        style="width:100%;padding:12px;margin-bottom:14px;border-radius:8px;
+               border:1px solid rgba(8,165,226,0.2);background:rgba(0,13,20,0.6);
+               color:#f1f9fe;font-family:'Exo 2',sans-serif;box-sizing:border-box">
+      <input id="login-password" type="password" placeholder="Password"
+        style="width:100%;padding:12px;margin-bottom:18px;border-radius:8px;
+               border:1px solid rgba(8,165,226,0.2);background:rgba(0,13,20,0.6);
+               color:#f1f9fe;font-family:'Exo 2',sans-serif;box-sizing:border-box">
+      <button id="login-btn" style="
+        width:100%;padding:14px;border:none;border-radius:8px;
+        background:linear-gradient(135deg,#006af5,#08a5e2);color:#f1f9fe;
+        font-size:1rem;cursor:pointer;font-family:'Orbitron',monospace;letter-spacing:0.1em;
+        box-shadow:0 0 20px rgba(8,165,226,0.3)">Login</button>
+      <p style="margin-top:16px;font-size:0.9rem;opacity:0.5;text-align:center">
+        Don't have an account?
+        <span id="show-register-btn" style="color:#08a5e2;cursor:pointer;text-decoration:underline">Register</span>
+      </p>
+    </div>
+
+    <div id="register-form" style="display:none">
+      <h2 style="margin:0 0 24px;color:#08a5e2;font-size:1.6rem;font-family:'Orbitron',monospace;letter-spacing:0.1em">Register</h2>
+      <input id="register-name" type="text" placeholder="Full Name"
+        style="width:100%;padding:12px;margin-bottom:14px;border-radius:8px;
+               border:1px solid rgba(8,165,226,0.2);background:rgba(0,13,20,0.6);
+               color:#f1f9fe;font-family:'Exo 2',sans-serif;box-sizing:border-box">
+      <input id="register-email" type="email" placeholder="Email"
+        style="width:100%;padding:12px;margin-bottom:14px;border-radius:8px;
+               border:1px solid rgba(8,165,226,0.2);background:rgba(0,13,20,0.6);
+               color:#f1f9fe;font-family:'Exo 2',sans-serif;box-sizing:border-box">
+      <input id="register-password" type="password" placeholder="Password"
+        style="width:100%;padding:12px;margin-bottom:14px;border-radius:8px;
+               border:1px solid rgba(8,165,226,0.2);background:rgba(0,13,20,0.6);
+               color:#f1f9fe;font-family:'Exo 2',sans-serif;box-sizing:border-box">
+      <button id="register-btn" style="
+        width:100%;padding:14px;border:none;border-radius:8px;
+        background:linear-gradient(135deg,#006af5,#08a5e2);color:#f1f9fe;
+        font-size:1rem;cursor:pointer;font-family:'Orbitron',monospace;letter-spacing:0.1em;
+        box-shadow:0 0 20px rgba(8,165,226,0.3)">Register</button>
+      <p style="margin-top:16px;font-size:0.9rem;opacity:0.5;text-align:center">
+        Already have an account?
+        <span id="show-login-btn" style="color:#08a5e2;cursor:pointer;text-decoration:underline">Login</span>
+      </p>
+    </div>
+
+    <p id="auth-error" style="color:#e96d25;margin-top:12px;font-size:0.9rem;text-align:center"></p>
+  </div>
+</div>
+
 <!-- Firebase SDK — Auth + Database -->
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
@@ -889,8 +952,18 @@ function renderProducts() {
 /* Builds a single product card HTML string.
     JSON.stringify is used to safely pass the item object to onclick.
    The replace(/"/g,"'") converts double-quotes to single so they don't break the HTML attribute. */
+   
 function productCard(p) {
   const itemJson = JSON.stringify(p).replace(/"/g, "'");
+
+  const isImage = p.icon && !p.icon.startsWith('http') && !p.icon.includes('images/')
+    ? false
+    : p.icon && p.icon.includes('/');
+
+  const imageContent = isImage
+    ? `<img src="${p.icon}" class="product-img" alt="${p.name}">`
+    : `<div class="product-img-placeholder">${p.icon}</div>`;
+    
   const priceLabel = `£${parseFloat(p.price).toFixed(2)}`;
   const stockVal = Number(p.stock);
   const hasStockInfo = p.stock !== undefined && p.stock !== null && !Number.isNaN(stockVal);
@@ -900,9 +973,10 @@ function productCard(p) {
     : (hasStockInfo && stockVal <= 5)
       ? `<div style="color:#e6b800;font-size:0.75rem;margin-top:2px">Only ${stockVal} left</div>`
       : '';
+      
   return `
   <div class="product-card">
-    <div class="product-img-placeholder">${p.icon}</div>
+    ${imageContent} 
     <div class="product-body">
       <span class="product-tag">${p.category}</span>
       <div class="product-name">${p.name}</div>
@@ -915,6 +989,7 @@ function productCard(p) {
     </div>
   </div>`;
 }
+
 
 /*  SHOPPING CART CLASS
    Manages cart state, localStorage persistence, and DOM rendering.
@@ -1032,10 +1107,11 @@ class ShoppingCart {
   /*  calculateTotal
      FIX: parseFloat + parseInt guards against string values from localStorage.
      Without these, "£34.99" (string) × 3 = NaN instead of 104.97. */
+     
   calculateTotal() {
     this.total = this.items.reduce((sum, item) => {
       const price = parseFloat(item.price)    || 0;
-      const qty   = parseInt(item.quantity)   || 0;
+      const qty   = parseInt(item.quantity || item.qty) || 0;
       return sum + (price * qty);
     }, 0);
   }
@@ -1139,6 +1215,7 @@ class ShoppingCart {
      Uses event delegation on document for quantity/remove buttons —
      these are dynamically rendered so we can't attach listeners directly.
      Static buttons (close, clear, checkout) are attached directly. */
+     
   setupEventListeners() {
     /* Close cart panel */
     document.querySelector('.close-cart').addEventListener('click', toggleCart);
@@ -1147,13 +1224,14 @@ class ShoppingCart {
     document.querySelector('.clear-btn').addEventListener('click', () => this.clearCart());
 
     /* Checkout — redirects to login page if not signed in */
+   /* Checkout — triggers modal if not signed in */
+
     document.querySelector('.checkout-btn').addEventListener('click', () => {
       if (this.items.length === 0) return;
 
-      /* If no active session, send to login page.
-         */
       if (!currentUser) {
-        window.location.href = '/login.html?redirect=shop';
+        document.getElementById('auth-overlay').style.display = 'flex';
+        toggleCart(); /* Optional: slides the cart away so they can focus on logging in */
         return;
       }
       openCheckout();

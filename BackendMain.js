@@ -2489,10 +2489,10 @@ function initIndexPage() {
 }
 
 function _initAuthForms() {
-  const overlay       = document.getElementById("auth-overlay");
-  const loginForm     = document.getElementById("login-form");
-  const registerForm  = document.getElementById("register-form");
-  const authError     = document.getElementById("auth-error");
+  const overlay        = document.getElementById("auth-overlay");
+  const loginForm      = document.getElementById("login-form");
+  const registerForm   = document.getElementById("register-form");
+  const authError      = document.getElementById("auth-error");
 
   function setOverlayOpen(isOpen) {
     document.body.classList.toggle("overlay-open", isOpen);
@@ -2609,6 +2609,19 @@ function _initAuthForms() {
             console.error("[X-Gym] Emergency profile creation also failed:", epErr);
           }
         }
+
+        // IF ON CART PAGE: Set session and reload instead of redirecting
+        if (window.location.pathname.toLowerCase().includes("cart")) {
+          sessionStorage.setItem("xgym_user", JSON.stringify({
+            uid: cred.user.uid,
+            name: profile ? profile.name : cred.user.email,
+            email: cred.user.email,
+            role: profile ? profile.role : "client"
+          }));
+          window.location.reload();
+          return;
+        }
+
         /* Check if Products link set a post-login flag to go to the store */
         const postLoginAction = (() => { try { return sessionStorage.getItem("xgym_post_login"); } catch(e) { return null; } })();
         if (postLoginAction === "store") {
@@ -2651,8 +2664,20 @@ function _initAuthForms() {
       try {
         registerBtn.disabled = true;
         registerBtn.textContent = "Registering…";
-        await registerUser(emailVal, passwordVal, nameVal, role);
+        const regData = await registerUser(emailVal, passwordVal, nameVal, role); 
         console.log("[X-Gym] Register done, role:", role, "— redirecting…");
+
+        // IF ON CART PAGE: Set session and reload instead of redirecting
+        if (window.location.pathname.toLowerCase().includes("cart")) {
+          sessionStorage.setItem("xgym_user", JSON.stringify({
+            uid: regData.user.uid,
+            name: nameVal,
+            email: emailVal,
+            role: role
+          }));
+          window.location.reload();
+          return;
+        }
 
         /* Also honour the post-login store flag on registration */
         const postLoginReg = (() => { try { return sessionStorage.getItem("xgym_post_login"); } catch(e) { return null; } })();
@@ -9671,6 +9696,7 @@ function _startAdminNotifListeners() {
 }
 
 (function bootstrap() {
+  _initAuthForms();
   const page = detectPage();
   if (page === "index")   initIndexPage();
   if (page === "client")  initClientPage();
