@@ -807,7 +807,7 @@ function renderAdminClassesToday(classes){
     return;
   }
   box.innerHTML=todayClasses.slice(0,4).map(function(c){
-    var time=c.time||c.scheduledAt?(new Date(c.scheduledAt||c.time)).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):'TBD';
+    var time = c.time ? c.time : 'TBD';
     var spots=c.capacity?(((c.participants?Object.keys(c.participants).length:0))+'/'+c.capacity+' spots'):'';
     return '<div class="class-row"><div class="c-dot" style="background:var(--red)"></div><div class="c-info"><div class="c-name">'+(c.name||c.title||'Class')+'</div><div class="c-time">'+time+(spots?' · '+spots:'')+'</div></div><button class="c-btn join" onclick="document.querySelector(\'[data-panel=panel-classes]\').click()">Manage</button></div>';
   }).join('');
