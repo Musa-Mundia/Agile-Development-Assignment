@@ -901,8 +901,11 @@ function runAdminSearch(query,opts){
 // ── Member of the Day scoring ────────────────────────────────────────────────
 function _motdArray(v){return Array.isArray(v)?v:[]}
 function _motdClientSpend(stats, clientId){
-  return _motdArray(stats.memberships).filter(function(m){return m&&m.clientId===clientId;}).reduce(function(sum,m){return sum+(Number(m.price)||0)},0);
+  var memSpend = _motdArray(stats.memberships).filter(function(m){return m&&m.clientId===clientId;}).reduce(function(sum,m){return sum+(Number(m.price)||0)},0);
+  var storeSpend = _motdArray(stats.transactions).filter(function(t){return t&&t.clientId===clientId;}).reduce(function(sum,t){return sum+(Number(t.amount)||0)},0);
+  return memSpend + storeSpend;
 }
+
 function _motdTrainerLinks(stats, clientId){
   return _motdArray(stats.trainerLinks).filter(function(link){
     if(!link||link.clientId!==clientId)return false;
@@ -986,7 +989,7 @@ async function computeMemberOfTheDay(stats){
           if(!top)return;
           var m=top.client||{};
           var mn=document.getElementById('motd-name');if(mn)mn.textContent=m.name||m.displayName||'Member';
-          var ms=document.getElementById('motd-stat');if(ms)ms.textContent=top.trainingLogs+' training log'+(top.trainingLogs===1?'':'s')+' · £'+top.spend.toFixed(0)+' invested';
+          var ms=document.getElementById('motd-stat');if(ms)ms.textContent=top.trainingLogs+' training log'+(top.trainingLogs===1?'':'s')+' · £'+top.spend.toFixed(2)+' invested';
         }).catch(function(){
           if(stats.members&&stats.members.length){
             var sorted=stats.members.slice().sort(function(a,b){return (b.createdAt||0)-(a.createdAt||0)});
